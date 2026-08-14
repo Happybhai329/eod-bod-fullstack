@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Production build outputs
+dist/
+build/
+
+# Local SQLite Database & Logs
+server/database.sqlite
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sensitive Google Cloud Service Account Keys & Credentials
+standard-gcp-project-485906-9d8a01147378.json
+server/credentials.json
+*.pem
+*.key
+
+# Environment Variables
+.env
+.env.local
+.env.production
+
+# IDE & System Files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
