@@ -200,8 +200,17 @@ app.get('/api/hierarchy', async (req, res) => {
 
 app.post('/api/structure/assign', async (req, res) => {
   try {
-    const { subDeptName, headId } = req.body;
+    const { subDeptName, headId, requesterId } = req.body;
     if (!subDeptName || !headId) return res.status(400).json({ success: false, message: 'Sub-department name and head ID required.' });
+    
+    if (requesterId) {
+      const requester = await get(`SELECT * FROM employees WHERE id = ?`, [requesterId]);
+      const isAdmin = requester && (requester.role.toLowerCase().includes('admin') || requester.role.toLowerCase().includes('director'));
+      if (!isAdmin) {
+        return res.status(403).json({ success: false, message: 'Unauthorized: Only System Administrators can reassign department heads.' });
+      }
+    }
+
     const emp = await get(`SELECT * FROM employees WHERE id = ?`, [headId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
@@ -214,7 +223,15 @@ app.post('/api/structure/assign', async (req, res) => {
 
 app.post('/api/structure/remove', async (req, res) => {
   try {
-    const { subDeptName } = req.body;
+    const { subDeptName, requesterId } = req.body;
+    if (requesterId) {
+      const requester = await get(`SELECT * FROM employees WHERE id = ?`, [requesterId]);
+      const isAdmin = requester && (requester.role.toLowerCase().includes('admin') || requester.role.toLowerCase().includes('director'));
+      if (!isAdmin) {
+        return res.status(403).json({ success: false, message: 'Unauthorized: Only System Administrators can remove department heads.' });
+      }
+    }
+
     await run(`UPDATE departments SET head_id = NULL, head_name = NULL WHERE name = ?`, [subDeptName]);
     res.json({ success: true, message: `Removed head from ${subDeptName}.` });
   } catch (err) {

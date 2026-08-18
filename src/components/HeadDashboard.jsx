@@ -157,9 +157,11 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
         </div>
 
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-          <button className="btn btn-secondary" onClick={onOpenStructure}>
-            <i className="bi bi-diagram-3 me-1"></i> Department Structure
-          </button>
+          {(user?.role?.toLowerCase().includes('admin') || user?.isAdmin) && (
+            <button className="btn btn-secondary" onClick={onOpenStructure}>
+              <i className="bi bi-diagram-3 me-1"></i> Department Structure
+            </button>
+          )}
           <button className="btn btn-secondary" onClick={onOpenKraSop}>
             <i className="bi bi-journal-text me-1"></i> KRA & SOP Search
           </button>

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 
-export default function DepartmentStructureModal({ isOpen, onClose }) {
+export default function DepartmentStructureModal({ isOpen, onClose, user }) {
   const [departments, setDepartments] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedSubDept, setSelectedSubDept] = useState('');
   const [selectedHeadId, setSelectedHeadId] = useState('');
   const [msg, setMsg] = useState('');
+
+  const isAdmin = user?.role?.toLowerCase().includes('admin') || user?.isAdmin;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -31,18 +33,24 @@ export default function DepartmentStructureModal({ isOpen, onClose }) {
 
   const handleAssignHead = async (e) => {
     e.preventDefault();
+    if (!isAdmin) {
+      alert('Unauthorized: Only System Administrators can reassign department heads.');
+      return;
+    }
     if (!selectedSubDept || !selectedHeadId) return;
     setMsg('');
     try {
       const res = await fetch('/api/structure/assign', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subDeptName: selectedSubDept, headId: selectedHeadId })
+        body: JSON.stringify({ subDeptName: selectedSubDept, headId: selectedHeadId, requesterId: user?.id })
       });
       const data = await res.json();
       if (data.success) {
         setMsg(data.message);
         fetchData();
+      } else {
+        alert(data.message || 'Failed to assign head.');
       }
     } catch (err) {
       console.error(err);
@@ -50,17 +58,23 @@ export default function DepartmentStructureModal({ isOpen, onClose }) {
   };
 
   const handleRemoveHead = async (subDeptName) => {
+    if (!isAdmin) {
+      alert('Unauthorized: Only System Administrators can remove department heads.');
+      return;
+    }
     if (!window.confirm(`Are you sure you want to remove the head of ${subDeptName}? Employees will fallback to Department Head.`)) return;
     try {
       const res = await fetch('/api/structure/remove', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ subDeptName })
+        body: JSON.stringify({ subDeptName, requesterId: user?.id })
       });
       const data = await res.json();
       if (data.success) {
         setMsg(data.message);
         fetchData();
+      } else {
+        alert(data.message || 'Failed to remove head.');
       }
     } catch (err) {
       console.error(err);
@@ -76,9 +90,11 @@ export default function DepartmentStructureModal({ isOpen, onClose }) {
       <div className="modal-content" style={{ maxWidth: '750px' }}>
         <div className="modal-header">
           <div>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>🌿 Department Structure Administration</h3>
+            <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+              🌿 {isAdmin ? 'Department Structure Administration' : 'Department Organizational Directory'}
+            </h3>
             <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
-              Assign, change, or remove Sub-Department Heads.
+              {isAdmin ? 'System Administrator control for assigning and managing Sub-Department Heads.' : 'Overview of current organizational structure and designated heads.'}
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose}>
@@ -122,7 +138,7 @@ export default function DepartmentStructureModal({ isOpen, onClose }) {
                           Current Head: {sd.head_name || sd.headName || 'None (Managed by Dept Head)'}
                         </div>
                       </div>
-                      {sd.head_id && (
+                      {isAdmin && sd.head_id && (
                         <button
                           className="btn btn-secondary btn-sm"
                           style={{ color: 'var(--danger)' }}
@@ -136,42 +152,46 @@ export default function DepartmentStructureModal({ isOpen, onClose }) {
                 </div>
               </div>
 
-              <div style={{ borderTop: '1px solid var(--line)', paddingTop: '20px' }}>
-                <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '12px' }}>Assign / Reassign Sub-Department Head</h4>
-                <form onSubmit={handleAssignHead} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
-                  <div>
-                    <label className="form-label">Sub-Department</label>
-                    <select
-                      className="form-select"
-                      value={selectedSubDept}
-                      onChange={(e) => setSelectedSubDept(e.target.value)}
-                    >
-                      <option value="">Select Sub-Department...</option>
-                      {subDepts.map(sd => (
-                        <option key={sd.name} value={sd.name}>{sd.name}</option>
-                      ))}
-                    </select>
-                  </div>
+              {isAdmin && (
+                <div style={{ borderTop: '1px solid var(--line)', paddingTop: '20px' }}>
+                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '12px' }}>
+                    <i className="bi bi-shield-lock me-1"></i> Admin: Assign / Reassign Sub-Department Head
+                  </h4>
+                  <form onSubmit={handleAssignHead} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
+                    <div>
+                      <label className="form-label">Sub-Department</label>
+                      <select
+                        className="form-select"
+                        value={selectedSubDept}
+                        onChange={(e) => setSelectedSubDept(e.target.value)}
+                      >
+                        <option value="">Select Sub-Department...</option>
+                        {subDepts.map(sd => (
+                          <option key={sd.name} value={sd.name}>{sd.name}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                  <div>
-                    <label className="form-label">Assign Employee as Head</label>
-                    <select
-                      className="form-select"
-                      value={selectedHeadId}
-                      onChange={(e) => setSelectedHeadId(e.target.value)}
-                    >
-                      <option value="">Select Employee...</option>
-                      {employees.map(emp => (
-                        <option key={emp.id} value={emp.id}>{emp.name} ({emp.id}) - {emp.department}</option>
-                      ))}
-                    </select>
-                  </div>
+                    <div>
+                      <label className="form-label">Assign Employee as Head</label>
+                      <select
+                        className="form-select"
+                        value={selectedHeadId}
+                        onChange={(e) => setSelectedHeadId(e.target.value)}
+                      >
+                        <option value="">Select Employee...</option>
+                        {employees.map(emp => (
+                          <option key={emp.id} value={emp.id}>{emp.name} ({emp.id}) - {emp.department}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                  <button type="submit" className="btn btn-primary">
-                    Assign Head
-                  </button>
-                </form>
-              </div>
+                    <button type="submit" className="btn btn-primary">
+                      Assign Head
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -183,3 +203,4 @@ export default function DepartmentStructureModal({ isOpen, onClose }) {
     </div>
   );
 }
+

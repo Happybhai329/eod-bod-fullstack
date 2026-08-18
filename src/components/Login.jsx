@@ -178,7 +178,7 @@ export default function Login({ onLogin }) {
                   type="text"
                   className="form-control"
                   style={{ paddingLeft: '38px', fontSize: '0.92rem' }}
-                  placeholder={role === 'Head' ? 'e.g. HEAD001' : 'e.g. TPC25107MR'}
+                  placeholder={role === 'Head' ? 'Enter Head / Manager ID' : 'Enter Employee ID'}
                   value={empId}
                   onChange={(e) => setEmpId(e.target.value)}
                   autoFocus

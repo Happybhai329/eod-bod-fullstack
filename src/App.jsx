@@ -238,6 +238,7 @@ export default function App() {
       <DepartmentStructureModal
         isOpen={isStructureOpen}
         onClose={() => setIsStructureOpen(false)}
+        user={user}
       />
 
       <ReportDetailModal
