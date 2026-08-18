@@ -281,7 +281,124 @@ async function seedInitialData() {
     console.log('====================================================');
 
   } catch (error) {
-    console.error('[DB] ❌ Google Sheets import failed:', error.message);
-    console.error('[DB] The app will start with an empty database. Fix credentials and restart.');
+    console.warn('[DB] ⚠️ Google Sheets import failed or credentials missing:', error.message);
+    console.log('[DB] 🔄 Falling back to comprehensive local seed data...');
+    await seedFallbackData();
   }
+}
+
+async function seedFallbackData() {
+  const now = new Date();
+  const todayStr = `${String(now.getDate()).padStart(2, '0')}/${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`;
+  const nowIso = now.toISOString();
+
+  // 1. Fallback Departments
+  const departments = [
+    { name: 'Sales & Marketing', parent: '', head_id: 'HEAD001', head_name: 'Rajesh Sharma (HEAD001)', is_main: 1 },
+    { name: 'Direct Sales', parent: 'Sales & Marketing', head_id: 'SUBHEAD01', head_name: 'Amit Patel (SUBHEAD01)', is_main: 0 },
+    { name: 'Digital Marketing', parent: 'Sales & Marketing', head_id: 'SUBHEAD02', head_name: 'Priya Verma (SUBHEAD02)', is_main: 0 },
+    { name: 'Academic Operations', parent: '', head_id: 'HEAD002', head_name: 'Dr. Sunita Gupta (HEAD002)', is_main: 1 },
+    { name: 'Faculty & Curriculum', parent: 'Academic Operations', head_id: 'SUBHEAD03', head_name: 'Vikram Singh (SUBHEAD03)', is_main: 0 },
+    { name: 'Human Resources', parent: '', head_id: 'HEAD003', head_name: 'Neha Kapoor (HEAD003)', is_main: 1 },
+    { name: 'Finance & Accounts', parent: '', head_id: 'HEAD004', head_name: 'Anil Agarwal (HEAD004)', is_main: 1 }
+  ];
+  for (const d of departments) {
+    await run(
+      `INSERT OR REPLACE INTO departments (name, parent, head_id, head_name, is_main) VALUES (?, ?, ?, ?, ?)`,
+      [d.name, d.parent, d.head_id, d.head_name, d.is_main]
+    );
+  }
+
+  // 2. Fallback Employees
+  const employees = [
+    { id: 'HEAD001', name: 'Rajesh Sharma', department: 'Sales & Marketing', sub_department: '', designation: 'VP of Sales', role: 'Head', status: 'Active' },
+    { id: 'SUBHEAD01', name: 'Amit Patel', department: 'Sales & Marketing', sub_department: 'Direct Sales', designation: 'Sales Manager', role: 'Head', status: 'Active' },
+    { id: 'SUBHEAD02', name: 'Priya Verma', department: 'Sales & Marketing', sub_department: 'Digital Marketing', designation: 'Marketing Lead', role: 'Head', status: 'Active' },
+    { id: 'TPC25107MR', name: 'Happy Bhasin', department: 'Sales & Marketing', sub_department: 'Direct Sales', designation: 'Senior Sales Executive', role: 'Employee', status: 'Active' },
+    { id: 'TPC25108AD', name: 'Aditi Sharma', department: 'Sales & Marketing', sub_department: 'Digital Marketing', designation: 'SEO Specialist', role: 'Employee', status: 'Active' },
+    { id: 'HEAD002', name: 'Dr. Sunita Gupta', department: 'Academic Operations', sub_department: '', designation: 'Academic Director', role: 'Head', status: 'Active' },
+    { id: 'SUBHEAD03', name: 'Vikram Singh', department: 'Academic Operations', sub_department: 'Faculty & Curriculum', designation: 'Faculty Lead', role: 'Head', status: 'Active' },
+    { id: 'TPC25109HR', name: 'Harshraj Singh', department: 'Academic Operations', sub_department: 'Faculty & Curriculum', designation: 'Senior Faculty Member', role: 'Employee', status: 'Active' },
+    { id: 'HEAD003', name: 'Neha Kapoor', department: 'Human Resources', sub_department: '', designation: 'Head of HR', role: 'Head', status: 'Active' },
+    { id: 'TPC25110DV', name: 'Devash Verma', department: 'Human Resources', sub_department: '', designation: 'Recruiter', role: 'Employee', status: 'Active' },
+    { id: 'HEAD004', name: 'Anil Agarwal', department: 'Finance & Accounts', sub_department: '', designation: 'Finance Chief', role: 'Head', status: 'Active' }
+  ];
+  for (const e of employees) {
+    await run(
+      `INSERT OR REPLACE INTO employees (id, name, department, sub_department, other_department, designation, role, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [e.id, e.name, e.department, e.sub_department, '', e.designation, e.role, e.status]
+    );
+  }
+
+  // 3. Fallback User Task Configs
+  const salesConfig = [
+    { key: 'task_calls', label: 'Outbound Client Calls', type: 'number', target: 40, weight: 30, description: 'Outbound counseling calls.' },
+    { key: 'task_demos', label: 'Conduct Demo Sessions', type: 'number', target: 5, weight: 35, description: 'Live student counseling demos.' },
+    { key: 'task_followup', label: 'Follow up Open Inquiries', type: 'checkbox', weight: 15, description: 'CRM inquiry updates.' },
+    { key: 'task_list', label: 'Daily Key Priorities', type: 'dynamicList', weight: 20, description: 'Key priority action items.' }
+  ];
+  const academicConfig = [
+    { key: 'task_lectures', label: 'Deliver Scheduled Lectures', type: 'number', target: 4, weight: 40, description: 'Interactive classroom teaching.' },
+    { key: 'task_evaluation', label: 'Evaluate Test Papers', type: 'number', target: 25, weight: 30, description: 'Grade student subjective papers.' },
+    { key: 'task_doubt_session', label: 'Hold Student Doubt Clearing', type: 'checkbox', weight: 15, description: '1-on-1 student doubt clearing.' },
+    { key: 'task_list', label: 'Curriculum & Paper Creation', type: 'dynamicList', weight: 15, description: 'Curriculum update deliverables.' }
+  ];
+  await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['TPC25107MR', JSON.stringify(salesConfig), nowIso]);
+  await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['TPC25108AD', JSON.stringify(salesConfig), nowIso]);
+  await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['TPC25109HR', JSON.stringify(academicConfig), nowIso]);
+  await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['HEAD001', JSON.stringify(salesConfig), nowIso]);
+
+  // 4. Fallback KRAs & SOPs
+  const kras = [
+    { id: 'KRA-SALES-01', timestamp: nowIso, position_name: 'Senior Sales Executive', text: 'Achieve monthly student enrollment targets and maintain high conversion rates.', type: 'Core Target' },
+    { id: 'KRA-SALES-02', timestamp: nowIso, position_name: 'Senior Sales Executive', text: 'Maintain CRM records and follow up with leads within 2 hours of inquiry.', type: 'Operational' },
+    { id: 'KRA-ACAD-01', timestamp: nowIso, position_name: 'Senior Faculty Member', text: 'Deliver high quality lectures aligned with curriculum syllabus schedule.', type: 'Academic' }
+  ];
+  for (const k of kras) {
+    await run(`INSERT OR REPLACE INTO kras (id, timestamp, position_name, text, type) VALUES (?, ?, ?, ?, ?)`, [k.id, k.timestamp, k.position_name, k.text, k.type]);
+  }
+
+  const sops = [
+    {
+      id: 'SOP-SALES-101',
+      timestamp: nowIso,
+      position_name: 'Senior Sales Executive',
+      kra_id: 'KRA-SALES-01',
+      text: 'Lead Calling & Counseling SOP: Call leads within 2 hours, introduce course offerings, evaluate student goals, and schedule demo.',
+      checklist: '1. Greet warmly\n2. Assess student background\n3. Pitch curriculum benefits\n4. Confirm demo booking date',
+      form_fields: 'Lead ID, Call Status, Demo Date, Lead Quality',
+      doc_link: 'https://drive.google.com/sample_sales_sop.pdf'
+    },
+    {
+      id: 'SOP-ACAD-101',
+      timestamp: nowIso,
+      position_name: 'Senior Faculty Member',
+      kra_id: 'KRA-ACAD-01',
+      text: 'Classroom Lecture Delivery SOP: Verify lab readiness, conduct interactive 60-min session, take attendance, and log discussion notes.',
+      checklist: '1. Check projector/board\n2. Mark attendance\n3. Deliver lecture with interactive Q&A\n4. Assign practice problems',
+      form_fields: 'Class ID, Subject, Topic Covered, Attendance Count',
+      doc_link: 'https://drive.google.com/sample_acad_sop.pdf'
+    }
+  ];
+  for (const s of sops) {
+    await run(`INSERT OR REPLACE INTO sops (id, timestamp, position_name, kra_id, text, checklist, form_fields, doc_link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [s.id, s.timestamp, s.position_name, s.kra_id, s.text, s.checklist, s.form_fields, s.doc_link]);
+  }
+
+  // 5. Fallback Daily Report & Notifications
+  const sampleBod = { task_calls: { value: 40, type: 'number' }, task_demos: { value: 5, type: 'number' }, task_followup: { status: 'Pending', type: 'checkbox' } };
+  const sampleEod = { task_calls: { value: 38, type: 'number' }, task_demos: { value: 5, type: 'number' }, task_followup: { status: 'Done', type: 'checkbox' } };
+  await run(
+    `INSERT OR REPLACE INTO daily_reports (
+      date, employee_id, department, bod_data, eod_data, system_score, last_updated,
+      head_rating, final_score, attendance, overtime, approval_status, expiry_timestamp
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [todayStr, 'TPC25107MR', 'Sales & Marketing', JSON.stringify(sampleBod), JSON.stringify(sampleEod), 98, nowIso, 100, 98, 'Present', 1.0, 'Approved', new Date(now.getTime() + 24 * 3600000).toISOString()]
+  );
+
+  await run(
+    `INSERT OR REPLACE INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, ?)`,
+    ['N_INIT_01', 'TPC25107MR', 'Welcome', 'Welcome to Daily Operations Hub. Please complete your morning BOD plan.', nowIso, 0]
+  );
+
+  console.log('[DB] ✅ Local fallback seed completed successfully.');
 }

@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: eod-bod-operations-hub
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: GOOGLE_CREDENTIALS_JSON
+        sync: false

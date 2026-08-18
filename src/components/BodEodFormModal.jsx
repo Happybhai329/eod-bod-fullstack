@@ -19,6 +19,12 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
           initial[taskKey] = { value: existingBod ? existingBod.value : task.target || 0, type: 'number' };
         } else if (task.type === 'checkbox') {
           initial[taskKey] = { status: existingBod ? existingBod.status : 'Pending', type: 'checkbox' };
+        } else if (task.type === 'categoryNumber') {
+          initial[taskKey] = {
+            type: 'categoryNumber',
+            value: existingBod ? existingBod.value : task.target || 0,
+            subCategories: existingBod?.subCategories || {}
+          };
         } else if (task.type === 'dynamicList') {
           initial[taskKey] = {
             type: 'dynamicList',
@@ -38,6 +44,12 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
           initial[taskKey] = {
             status: existingEod ? existingEod.status : 'Done',
             type: 'checkbox'
+          };
+        } else if (task.type === 'categoryNumber') {
+          initial[taskKey] = {
+            type: 'categoryNumber',
+            value: existingEod ? existingEod.value : (existingBod ? existingBod.value : task.target || 0),
+            subCategories: existingEod?.subCategories || existingBod?.subCategories || {}
           };
         } else if (task.type === 'dynamicList') {
           initial[taskKey] = {
@@ -62,6 +74,22 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
       ...prev,
       [key]: { ...prev[key], value: Number(val) }
     }));
+  };
+
+  const handleSubCategoryChange = (taskKey, catName, val) => {
+    setFormData(prev => {
+      const currentTask = prev[taskKey] || { type: 'categoryNumber', subCategories: {} };
+      const updatedSub = { ...(currentTask.subCategories || {}), [catName]: Number(val) };
+      const sum = Object.values(updatedSub).reduce((a, b) => a + (Number(b) || 0), 0);
+      return {
+        ...prev,
+        [taskKey]: {
+          ...currentTask,
+          subCategories: updatedSub,
+          value: sum
+        }
+      };
+    });
   };
 
   const handleCheckboxChange = (key, isChecked) => {
@@ -120,6 +148,51 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
     }
   };
 
+  const computeLiveScore = () => {
+    if (phase !== 'EOD' || !config || config.length === 0) return null;
+    const scores = [];
+    config.forEach(task => {
+      const taskKey = task.key;
+      const eTask = formData[taskKey];
+      if (!eTask) return;
+      const bTask = initialBodData && initialBodData[taskKey] ? initialBodData[taskKey] : {};
+      let target = Number(bTask.value) || task.target || 1;
+      let achieved = 0;
+
+      if (eTask.type === 'dynamicList') {
+        let tSum = 0;
+        let aSum = 0;
+        (eTask.list || []).forEach(item => {
+          const itemTarget = item.hasTarget ? Number(item.target) || 1 : 1;
+          const itemAchieved = item.hasTarget ? Number(item.achieved) || 0 : (item.status === 'Done' ? 1 : 0);
+          if (item.isVoluntary) aSum += itemAchieved;
+          else { tSum += itemTarget; aSum += itemAchieved; }
+        });
+        target = tSum || 1;
+        achieved = aSum;
+      } else if (eTask.type === 'checkbox') {
+        achieved = eTask.status === 'Done' ? target : 0;
+      } else if (eTask.type === 'number') {
+        achieved = Number(eTask.value) || 0;
+      } else if (eTask.type === 'categoryNumber') {
+        if (eTask.subCategories) {
+          achieved = Object.values(eTask.subCategories).reduce((s, v) => s + (Number(v) || 0), 0);
+        } else {
+          achieved = Number(eTask.value) || 0;
+        }
+      }
+
+      const p = target <= 0 ? 100 : (achieved / target) * 100;
+      scores.push(Math.min(100, Math.max(0, p)));
+    });
+
+    if (scores.length === 0) return 0;
+    const total = scores.reduce((a, b) => a + b, 0);
+    return Math.round(total / scores.length);
+  };
+
+  const liveScore = computeLiveScore();
+
   return (
     <div className="modal-overlay">
       <div className="modal-content">
@@ -142,6 +215,29 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
             {error && (
               <div style={{ padding: '10px', background: 'var(--danger-light)', color: 'var(--danger)', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
                 {error}
+              </div>
+            )}
+
+            {phase === 'EOD' && liveScore !== null && (
+              <div style={{ background: 'var(--primary-light)', border: '1px solid #bfdbfe', borderRadius: 'var(--radius)', padding: '14px 16px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--ink)' }}>
+                    ⚡ Real-Time Estimated System Score:
+                  </span>
+                  <strong style={{ fontSize: '1.25rem', color: liveScore >= 80 ? 'var(--success)' : liveScore >= 50 ? 'var(--warning)' : 'var(--danger)' }}>
+                    {liveScore}%
+                  </strong>
+                </div>
+                <div style={{ width: '100%', height: '8px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${liveScore}%`,
+                      height: '100%',
+                      background: liveScore >= 80 ? 'var(--success)' : liveScore >= 50 ? 'var(--warning)' : 'var(--danger)',
+                      transition: 'width 0.25s ease, background 0.25s ease'
+                    }}
+                  />
+                </div>
               </div>
             )}
 
@@ -194,6 +290,34 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
                           <strong style={{ fontSize: '1rem', color: 'var(--ink)' }}>{initialBodData[taskKey].value || 0}</strong>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {task.type === 'categoryNumber' && (
+                    <div>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '8px' }}>
+                        {(Array.isArray(task.categories) && task.categories.length > 0 ? task.categories : ['General']).map((cat) => (
+                          <div key={cat} style={{ background: 'white', border: '1px solid var(--line)', borderRadius: '6px', padding: '8px' }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--ink)', display: 'block', marginBottom: '4px' }}>
+                              {cat}
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              className="form-control"
+                              style={{ padding: '6px 8px' }}
+                              value={taskState.subCategories?.[cat] !== undefined ? taskState.subCategories[cat] : 0}
+                              onChange={(e) => handleSubCategoryChange(taskKey, cat, e.target.value)}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--primary-light)', padding: '8px 12px', borderRadius: '6px', fontSize: '0.82rem' }}>
+                        <span>Total Sum: <strong>{taskState.value || 0}</strong></span>
+                        {phase === 'EOD' && initialBodData && initialBodData[taskKey] && (
+                          <span style={{ color: 'var(--ink-muted)' }}>Target: <strong>{initialBodData[taskKey].value || task.target || 0}</strong></span>
+                        )}
+                      </div>
                     </div>
                   )}
 

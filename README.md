@@ -63,15 +63,34 @@ Open **`http://localhost:3000`** in your browser.
 
 ---
 
-## 💻 Development Commands
+## ☁️ Deployment on Render (1-Click Blueprint)
+
+This repository includes a [`render.yaml`](file:///d:/prime/eod%20bod%20full%20stack/render.yaml) specification for zero-config deployment on Render.com.
+
+### Steps to Deploy:
+1. Push your repository to **GitHub** or **GitLab**.
+2. Go to the [Render Dashboard](https://dashboard.render.com/) -> **New** -> **Blueprint**.
+3. Connect your repository. Render will automatically detect `render.yaml` and configure:
+   - **Environment**: Node
+   - **Build Command**: `npm install && npm run build`
+   - **Start Command**: `npm start`
+   - **Health Check**: `/api/health`
+4. *(Optional)* If syncing to Google Sheets, add your Service Account JSON into the environment variable **`GOOGLE_CREDENTIALS_JSON`**.
+5. Click **Apply** to deploy!
+
+---
+
+## 💻 Development & Testing Commands
 
 | Command | Description |
 |:---|:---|
 | `npm run dev` | Run Vite frontend dev server with hot reload |
 | `npm run build` | Compile production bundle to `dist/` |
+| `npm test` | Run full automated test suite with Node test runner |
 | `npm start` | Start Node.js Express server |
 
 ---
 
 ## 🔒 Security Note
 Private API keys, database files, and Google Service Account credentials are excluded via `.gitignore`. Always use environment variables or local key files when deploying.
+

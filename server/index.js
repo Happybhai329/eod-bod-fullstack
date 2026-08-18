@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initDatabase, query, run, get } from './db.js';
+import { syncDailyReportToSheets, syncFineToSheets } from './googleSheets.js';
 import {
   calculatePerformance,
   calculateFinalScore,
@@ -31,6 +32,21 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Safe non-blocking sync helpers
+function asyncSyncReport(report) {
+  if (!report) return;
+  syncDailyReportToSheets(report).catch(err => {
+    console.warn('[Sync Outbox] Report sync notice (ignored):', err.message);
+  });
+}
+
+function asyncSyncFine(fine) {
+  if (!fine) return;
+  syncFineToSheets(fine).catch(err => {
+    console.warn('[Sync Outbox] Fine sync notice (ignored):', err.message);
+  });
+}
+
 // Utility functions
 function getTodayString() {
   const d = new Date();
@@ -52,6 +68,29 @@ function toComparableDate(ddmmyyyyStr) {
   const p = ddmmyyyyStr.split('/');
   if (p.length !== 3) return '';
   return p[2] + p[1] + p[0];
+}
+
+function isDateInFilter(dateStr, filter) {
+  if (!filter || filter === 'All') return true;
+  const todayStr = getTodayString();
+  if (filter === 'Daily') {
+    return dateStr === todayStr;
+  }
+  const reportDate = parseDateDDMMYYYY(dateStr);
+  if (isNaN(reportDate.getTime()) || reportDate.getTime() === 0) return true;
+
+  const now = new Date();
+  const reportTime = new Date(reportDate.getFullYear(), reportDate.getMonth(), reportDate.getDate()).getTime();
+  const todayTime = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const diffDays = Math.floor((todayTime - reportTime) / (1000 * 60 * 60 * 24));
+
+  if (filter === 'Weekly') {
+    return diffDays >= 0 && diffDays <= 7;
+  }
+  if (filter === 'Monthly') {
+    return diffDays >= 0 && diffDays <= 30;
+  }
+  return true;
 }
 
 // Automatic review auto-approval check
@@ -79,12 +118,33 @@ async function checkAutoApprovals() {
           `INSERT INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, 0)`,
           [notifId, r.employee_id, 'Auto Approved', `Your report for ${r.date} was auto-approved with a head rating of 100%.`, new Date().toISOString()]
         );
+
+        const updated = await get(`SELECT * FROM daily_reports WHERE id = ?`, [r.id]);
+        if (updated) asyncSyncReport(updated);
       }
     }
   } catch (err) {
     console.error('Auto approval error:', err);
   }
 }
+
+// -------------------------------------------------------------
+// HEALTH CHECK ROUTE (Render & Cloud Monitoring)
+// -------------------------------------------------------------
+app.get('/api/health', async (req, res) => {
+  try {
+    const empCount = await query(`SELECT COUNT(*) as count FROM employees`);
+    res.json({
+      status: 'healthy',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      database: 'connected',
+      employees: empCount[0]?.count || 0
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'unhealthy', error: err.message });
+  }
+});
 
 // -------------------------------------------------------------
 // AUTH ROUTES
@@ -253,19 +313,22 @@ app.post('/api/employee/:id/report', async (req, res) => {
     const safePhaseJSON = JSON.stringify(phaseData);
     const existing = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [todayStr, empId]);
 
+    let savedReport = null;
     if (!existing) {
       if (phase === 'BOD') {
-        await run(
+        const insertRes = await run(
           `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated) VALUES (?, ?, ?, ?, ?)`,
           [todayStr, empId, emp.department, safePhaseJSON, now.toISOString()]
         );
+        savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [insertRes.lastID]);
       } else {
         const sysScore = calculatePerformance(null, phaseData);
         const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
-        await run(
+        const insertRes = await run(
           `INSERT INTO daily_reports (date, employee_id, department, eod_data, system_score, last_updated, approval_status, expiry_timestamp) VALUES (?, ?, ?, ?, ?, ?, 'Pending Review', ?)`,
           [todayStr, empId, emp.department, safePhaseJSON, sysScore, now.toISOString(), expiryTime]
         );
+        savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [insertRes.lastID]);
       }
     } else {
       if (existing.approval_status === 'Approved' || existing.approval_status === 'Auto Approved') {
@@ -277,6 +340,7 @@ app.post('/api/employee/:id/report', async (req, res) => {
           `UPDATE daily_reports SET bod_data = ?, last_updated = ? WHERE id = ?`,
           [safePhaseJSON, now.toISOString(), existing.id]
         );
+        savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       } else {
         let bodObj = null;
         if (existing.bod_data) {
@@ -293,7 +357,12 @@ app.post('/api/employee/:id/report', async (req, res) => {
           `UPDATE daily_reports SET eod_data = ?, system_score = ?, final_score = ?, last_updated = ?, approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
           [safePhaseJSON, sysScore, finalScore, now.toISOString(), expiryTime, existing.id]
         );
+        savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       }
+    }
+
+    if (savedReport) {
+      asyncSyncReport(savedReport);
     }
 
     res.json({ success: true, message: `${phase} report saved successfully.` });
@@ -311,10 +380,13 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
     const empId = req.params.id;
     const { filter = 'Weekly' } = req.query;
 
-    const reports = await query(`SELECT * FROM daily_reports WHERE employee_id = ? ORDER BY id DESC`, [empId]);
+    const allReports = await query(`SELECT * FROM daily_reports WHERE employee_id = ? ORDER BY id DESC`, [empId]);
     const fines = await query(`SELECT * FROM fines WHERE employee_id = ? ORDER BY id DESC`, [empId]);
 
-    const scores = reports
+    // Apply date range filter to scores & metrics
+    const filteredReports = allReports.filter(r => isDateInFilter(r.date, filter));
+
+    const scores = filteredReports
       .filter(r => (r.approval_status === 'Approved' || r.approval_status === 'Auto Approved') && r.final_score !== null)
       .map(r => r.final_score);
 
@@ -324,7 +396,8 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
       success: true,
       data: {
         average,
-        reports,
+        reports: allReports,
+        filteredReports,
         fines
       }
     });
@@ -369,9 +442,12 @@ app.get('/api/head/dashboard', async (req, res) => {
     const allReports = await query(sql);
     const reports = allReports.filter(r => managedEmpIds.includes(r.employee_id));
 
-    // Calculate score metrics
+    // Filter reports according to selected time period (Daily, Weekly, Monthly)
+    const filteredReports = reports.filter(r => isDateInFilter(r.date, filter));
+
+    // Calculate score metrics based on filtered date range
     const empScores = {};
-    reports.forEach(r => {
+    filteredReports.forEach(r => {
       if ((r.approval_status === 'Approved' || r.approval_status === 'Auto Approved') && r.final_score !== null) {
         if (!empScores[r.employee_id]) empScores[r.employee_id] = [];
         empScores[r.employee_id].push(r.final_score);
@@ -403,6 +479,7 @@ app.get('/api/head/dashboard', async (req, res) => {
         topPerformer: topEmp,
         needsAttention: lowEmp,
         reports,
+        filteredReports,
         managedEmployees: managedEmps
       }
     });
@@ -448,6 +525,9 @@ app.post('/api/head/rate', async (req, res) => {
       `INSERT INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, 0)`,
       [notifId, empId, 'Report Approved', `Your report for ${dateStr} was approved by ${raterName} with a rating of ${numRating}% (Final Score: ${finalScore}%).`, nowIso]
     );
+
+    const updated = await get(`SELECT * FROM daily_reports WHERE id = ?`, [report.id]);
+    if (updated) asyncSyncReport(updated);
 
     res.json({ success: true, finalScore, headRating: numRating, message: 'Rating saved successfully.' });
   } catch (err) {
@@ -516,7 +596,21 @@ app.post('/api/fines/issue', async (req, res) => {
     const fineId = 'F' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
     const nowIso = new Date().toISOString();
     const docName = `Fine_Notice_${empId}_${dateStr.replace(/\//g, '')}.pdf`;
-    const docUrl = `https://prime-docs.local/fines/${fineId}`;
+    const docUrl = `/api/fines/${fineId}/document`;
+
+    const fineObj = {
+      id: fineId,
+      employee_id: empId,
+      date: dateStr,
+      amount: Number(amount),
+      reason,
+      doc_url: docUrl,
+      doc_name: docName,
+      issued_on: nowIso,
+      issued_by: issuerName,
+      status: 'Pending',
+      last_updated: nowIso
+    };
 
     await run(
       `INSERT INTO fines (id, employee_id, date, amount, reason, doc_url, doc_name, issued_on, issued_by, status, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending', ?)`,
@@ -534,7 +628,9 @@ app.post('/api/fines/issue', async (req, res) => {
       [notifId, empId, 'New Fine Issued', `A fine of ₹${amount} was issued for ${dateStr}. Reason: ${reason}`, nowIso]
     );
 
-    res.json({ success: true, fineId, message: 'Fine issued successfully.' });
+    asyncSyncFine(fineObj);
+
+    res.json({ success: true, fineId, docUrl, message: 'Fine issued successfully.' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
@@ -544,13 +640,156 @@ app.post('/api/fines/status', async (req, res) => {
   try {
     const { fineId, status, employeeRemarks } = req.body;
     const nowIso = new Date().toISOString();
+    const fine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
+    if (!fine) return res.status(404).json({ success: false, message: 'Fine record not found.' });
+
     await run(
       `UPDATE fines SET status = ?, employee_remarks = ?, last_updated = ? WHERE id = ?`,
       [status, employeeRemarks || '', nowIso, fineId]
     );
-    res.json({ success: true, message: 'Fine status updated.' });
+
+    await run(
+      `UPDATE daily_reports SET fine_status = ?, employee_remarks = ? WHERE date = ? AND employee_id = ?`,
+      [status, employeeRemarks || '', fine.date, fine.employee_id]
+    );
+
+    // Notify issuing authority if disputed or acknowledged
+    const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
+    await run(
+      `INSERT INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, 0)`,
+      [notifId, fine.employee_id, `Fine ${status}`, `Fine #${fineId} status updated to '${status}'. Remarks: ${employeeRemarks || 'None'}`, nowIso]
+    );
+
+    const updatedFine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
+    if (updatedFine) asyncSyncFine(updatedFine);
+
+    res.json({ success: true, message: 'Fine status updated successfully.' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// FINE PRINTABLE DOCUMENT VIEW
+// -------------------------------------------------------------
+app.get('/api/fines/:id/document', async (req, res) => {
+  try {
+    const fineId = req.params.id;
+    const fine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
+    if (!fine) return res.status(404).send('<h2>Fine notice not found.</h2>');
+
+    const emp = await get(`SELECT * FROM employees WHERE id = ?`, [fine.employee_id]);
+    const empName = emp ? emp.name : fine.employee_id;
+    const dept = emp ? emp.department : 'Operations';
+    const desig = emp ? emp.designation : 'Staff';
+
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Official Fine Notice - ${fine.id}</title>
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; margin: 40px auto; max-width: 800px; color: #1e293b; line-height: 1.6; }
+    .letterhead { border-bottom: 3px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+    .brand { font-size: 24px; font-weight: 800; color: #1e3a8a; letter-spacing: -0.5px; }
+    .title-banner { background: #fef2f2; border: 1px solid #fca5a5; padding: 12px 18px; border-radius: 8px; margin-bottom: 24px; }
+    .title-banner h2 { color: #dc2626; margin: 0; font-size: 18px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .meta-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .meta-table td { padding: 8px 12px; border: 1px solid #e2e8f0; font-size: 14px; }
+    .meta-table .label { font-weight: 700; background: #f8fafc; width: 25%; color: #475569; }
+    .fine-amount { font-size: 26px; font-weight: 800; color: #dc2626; margin: 16px 0; }
+    .reason-box { background: #f8fafc; border-left: 4px solid #dc2626; padding: 16px; border-radius: 4px; font-size: 14px; margin-bottom: 24px; }
+    .remarks-box { background: #eff6ff; border-left: 4px solid #2563eb; padding: 16px; border-radius: 4px; font-size: 14px; margin-bottom: 24px; }
+    .signatures { margin-top: 50px; display: flex; justify-content: space-between; padding-top: 30px; }
+    .sig-block { border-top: 1px solid #94a3b8; width: 220px; text-align: center; font-size: 13px; color: #64748b; padding-top: 6px; }
+    .actions { margin-bottom: 20px; text-align: right; }
+    .btn { background: #1e3a8a; color: white; border: none; padding: 10px 18px; border-radius: 6px; font-weight: 700; cursor: pointer; text-decoration: none; font-size: 13px; }
+    @media print { .actions { display: none; } body { margin: 0; } }
+  </style>
+</head>
+<body>
+  <div class="actions">
+    <button class="btn" onclick="window.print()">🖨️ Print / Save as PDF</button>
+  </div>
+
+  <div class="letterhead">
+    <div>
+      <div class="brand">DAILY OPERATIONS HUB</div>
+      <small style="color: #64748b; font-weight: 600; text-transform: uppercase;">Workforce Performance & Operations Division</small>
+    </div>
+    <div style="text-align: right; font-size: 12px; color: #64748b;">
+      <strong>Ref Doc:</strong> ${fine.id}<br>
+      <strong>Issued On:</strong> ${new Date(fine.issued_on).toLocaleDateString('en-GB')}
+    </div>
+  </div>
+
+  <div class="title-banner">
+    <h2>Notice of Operational Fine / Penalty</h2>
+  </div>
+
+  <table class="meta-table">
+    <tr>
+      <td class="label">Employee Name</td>
+      <td><strong>${empName}</strong></td>
+      <td class="label">Employee ID</td>
+      <td><strong>${fine.employee_id}</strong></td>
+    </tr>
+    <tr>
+      <td class="label">Department</td>
+      <td>${dept}</td>
+      <td class="label">Designation</td>
+      <td>${desig}</td>
+    </tr>
+    <tr>
+      <td class="label">Task Date</td>
+      <td><strong>${fine.date}</strong></td>
+      <td class="label">Fine Status</td>
+      <td><strong>${fine.status || 'Pending'}</strong></td>
+    </tr>
+    <tr>
+      <td class="label">Issuing Authority</td>
+      <td colspan="3">${fine.issued_by}</td>
+    </tr>
+  </table>
+
+  <div>
+    <strong>Fine Deduction Amount:</strong>
+    <div class="fine-amount">₹${fine.amount}</div>
+  </div>
+
+  <div>
+    <strong>Reason for Penalty / Policy Infraction:</strong>
+    <div class="reason-box">
+      ${fine.reason}
+    </div>
+  </div>
+
+  ${fine.employee_remarks ? `
+  <div>
+    <strong>Employee Remarks / Explanation:</strong>
+    <div class="remarks-box">
+      ${fine.employee_remarks}
+    </div>
+  </div>
+  ` : ''}
+
+  <div class="signatures">
+    <div class="sig-block">
+      <strong>${fine.issued_by}</strong><br>
+      Authorized Signatory / Department Head
+    </div>
+    <div class="sig-block">
+      <strong>${empName}</strong><br>
+      Employee Signature & Acknowledgment
+    </div>
+  </div>
+</body>
+</html>
+    `;
+    res.send(html);
+  } catch (err) {
+    res.status(500).send('Error generating fine notice: ' + err.message);
   }
 });
 
@@ -619,11 +858,18 @@ if (fs.existsSync(distPath)) {
   });
 }
 
-// Start Server
-initDatabase().then(() => {
-  app.listen(PORT, () => {
-    console.log(`EOD/BOD Full Stack Server running at http://localhost:${PORT}`);
+// Start Server if directly executed
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === path.resolve(__filename);
+if (isMainModule) {
+  initDatabase().then(() => {
+    app.listen(PORT, () => {
+      console.log(`EOD/BOD Full Stack Server running at http://localhost:${PORT}`);
+    });
+  }).catch(err => {
+    console.error('Failed to initialize database:', err);
   });
-}).catch(err => {
-  console.error('Failed to initialize database:', err);
-});
+}
+
+export { app, checkAutoApprovals, isDateInFilter, getTodayString, parseDateDDMMYYYY };
+
+

@@ -38,6 +38,14 @@ export default function App() {
 
   const [activeView, setActiveView] = useState('team');
   const [unreadNotifs, setUnreadNotifs] = useState(0);
+  const [toast, setToast] = useState(null);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -61,11 +69,13 @@ export default function App() {
 
   const handleLogin = (loggedUser) => {
     setUser(loggedUser);
+    showToast(`Welcome back, ${loggedUser.name}!`);
     if (loggedUser.isHead) setActiveView('team');
   };
 
   const handleLogout = () => {
     setUser(null);
+    showToast('Signed out successfully.', 'info');
   };
 
   // Open Form modal
@@ -88,6 +98,8 @@ export default function App() {
     if (!data.success) {
       throw new Error(data.message || 'Error saving report.');
     }
+    showToast(`${phase} report submitted successfully!`);
+    fetchUnreadNotifs();
   };
 
   // Open Task Config modal
@@ -108,6 +120,7 @@ export default function App() {
     if (!data.success) {
       throw new Error(data.message || 'Error saving config.');
     }
+    showToast('Task configuration saved successfully!');
   };
 
   // Open Fine modal
@@ -128,6 +141,7 @@ export default function App() {
     if (!data.success) {
       throw new Error(data.message || 'Error issuing fine.');
     }
+    showToast(`Fine notice issued for ${finePayload.empId}.`, 'warning');
   };
 
   // Open Detail modal
@@ -153,6 +167,7 @@ export default function App() {
         ) : user.isHead && activeView === 'team' ? (
           <HeadDashboard
             user={user}
+            showToast={showToast}
             onOpenForm={handleOpenForm}
             onOpenConfig={handleOpenConfig}
             onOpenFine={handleOpenFine}
@@ -163,12 +178,22 @@ export default function App() {
         ) : (
           <EmployeeDashboard
             user={user}
+            showToast={showToast}
             onOpenForm={handleOpenForm}
             onOpenKraSop={() => setIsKraSopOpen(true)}
             onOpenDetail={handleOpenDetail}
           />
         )}
       </main>
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`toast-alert toast-${toast.type}`}>
+          <i className={`bi ${toast.type === 'success' ? 'bi-check-circle-fill' : toast.type === 'warning' ? 'bi-exclamation-triangle-fill' : 'bi-info-circle-fill'}`}></i>
+          <span>{toast.message}</span>
+          <button className="toast-close" onClick={() => setToast(null)}>×</button>
+        </div>
+      )}
 
       {/* Modals */}
       <BodEodFormModal

@@ -106,13 +106,14 @@ export default function TaskConfigModal({ isOpen, onClose, empId, empName, onSav
                     />
                     <select
                       className="form-select"
-                      style={{ width: '160px' }}
+                      style={{ width: '170px' }}
                       value={task.type}
                       onChange={(e) => handleChange(idx, 'type', e.target.value)}
                     >
                       <option value="number">Numeric</option>
                       <option value="checkbox">Checkbox</option>
                       <option value="dynamicList">Dynamic List</option>
+                      <option value="categoryNumber">Categorized Target</option>
                     </select>
                     <button
                       type="button"
@@ -125,9 +126,9 @@ export default function TaskConfigModal({ isOpen, onClose, empId, empName, onSav
                   </div>
 
                   <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                    {task.type === 'number' && (
+                    {(task.type === 'number' || task.type === 'categoryNumber') && (
                       <div style={{ flex: 1 }}>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Target Quantity</span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Target Total Quantity</span>
                         <input
                           type="number"
                           className="form-control"
@@ -146,6 +147,19 @@ export default function TaskConfigModal({ isOpen, onClose, empId, empName, onSav
                       />
                     </div>
                   </div>
+
+                  {task.type === 'categoryNumber' && (
+                    <div style={{ marginTop: '8px' }}>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--ink-muted)' }}>Sub-Categories (comma separated)</span>
+                      <input
+                        type="text"
+                        className="form-control"
+                        placeholder="e.g. Inbound Calls, WhatsApp Chat, Walk-ins"
+                        value={task.categories ? (Array.isArray(task.categories) ? task.categories.join(', ') : task.categories) : ''}
+                        onChange={(e) => handleChange(idx, 'categories', e.target.value.split(',').map(s => s.trim()).filter(Boolean))}
+                      />
+                    </div>
+                  )}
 
                   <div style={{ marginTop: '8px' }}>
                     <input

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
 
-export default function HeadDashboard({ user, onOpenForm, onOpenConfig, onOpenFine, onOpenKraSop, onOpenStructure, onOpenDetail }) {
+export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfig, onOpenFine, onOpenKraSop, onOpenStructure, onOpenDetail }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ overallAverage: 0, topPerformer: 'N/A', needsAttention: 'N/A', reports: [], managedEmployees: [] });
   const [loading, setLoading] = useState(false);
   const [ratingInputs, setRatingInputs] = useState({});
   const [myTaskConfig, setMyTaskConfig] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
 
   useEffect(() => {
     fetchHeadDashboard();
@@ -77,6 +79,7 @@ export default function HeadDashboard({ user, onOpenForm, onOpenConfig, onOpenFi
       });
       const result = await res.json();
       if (result.success) {
+        if (showToast) showToast(`Report for ${report.employee_id} approved with rating ${input.rating}%.`);
         fetchHeadDashboard();
       } else {
         alert(result.message || 'Failed to save rating.');
@@ -85,6 +88,57 @@ export default function HeadDashboard({ user, onOpenForm, onOpenConfig, onOpenFi
       alert('Error connecting to backend API.');
     }
   };
+
+  const exportToCSV = () => {
+    const rows = displayedReports;
+    if (rows.length === 0) {
+      alert('No reports to export.');
+      return;
+    }
+
+    const headers = ['Date', 'Employee ID', 'Department', 'System Score %', 'Head Rating %', 'Final Score %', 'Attendance', 'Overtime (hrs)', 'Status', 'Fine Amount', 'Fine Reason', 'Employee Remarks'];
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => [
+        `"${r.date || ''}"`,
+        `"${r.employee_id || ''}"`,
+        `"${r.department || ''}"`,
+        r.system_score ?? 0,
+        r.head_rating ?? '',
+        r.final_score ?? '',
+        `"${r.attendance || 'Present'}"`,
+        r.overtime || 0,
+        `"${r.approval_status || 'Pending Review'}"`,
+        r.fine_amount || 0,
+        `"${(r.fine_reason || '').replace(/"/g, '""')}"`,
+        `"${(r.employee_remarks || '').replace(/"/g, '""')}"`
+      ].join(','))
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `Team_Operations_Report_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    if (showToast) showToast('CSV report downloaded successfully!');
+  };
+
+  const displayedReports = (data.reports || []).filter(r => {
+    const matchesSearch = !searchTerm ||
+      r.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.department && r.department.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      r.date.includes(searchTerm);
+
+    const matchesStatus = statusFilter === 'All' ||
+      (statusFilter === 'Pending' && r.approval_status === 'Pending Review') ||
+      (statusFilter === 'Approved' && r.approval_status === 'Approved') ||
+      (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved');
+
+    return matchesSearch && matchesStatus;
+  });
 
   return (
     <div>
@@ -219,6 +273,31 @@ export default function HeadDashboard({ user, onOpenForm, onOpenConfig, onOpenFi
             <h2 className="section-title">Report Review & Rating</h2>
             <p className="section-description">Review submitted EOD reports, set Head Rating multiplier (0-200%), and approve final scores.</p>
           </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type="text"
+              className="form-control"
+              style={{ width: '220px', padding: '6px 12px', fontSize: '0.82rem' }}
+              placeholder="Search Emp ID / Dept / Date..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <select
+              className="form-select"
+              style={{ width: '160px', padding: '6px 12px', fontSize: '0.82rem' }}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="All">All Statuses</option>
+              <option value="Pending">Pending Review</option>
+              <option value="Approved">Approved</option>
+              <option value="Auto Approved">Auto Approved</option>
+            </select>
+            <button className="btn btn-secondary btn-sm" onClick={exportToCSV} title="Export CSV">
+              <i className="bi bi-download me-1"></i> Export CSV ({displayedReports.length})
+            </button>
+          </div>
         </div>
 
         <div className="table-shell">
@@ -237,14 +316,14 @@ export default function HeadDashboard({ user, onOpenForm, onOpenConfig, onOpenFi
               </tr>
             </thead>
             <tbody>
-              {data.reports.length === 0 ? (
+              {displayedReports.length === 0 ? (
                 <tr>
                   <td colSpan="9" style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '24px' }}>
-                    No pending or submitted reports found for your team.
+                    No reports match your selected search or filter criteria.
                   </td>
                 </tr>
               ) : (
-                data.reports.map((r) => {
+                displayedReports.map((r) => {
                   const reportKey = r.id || `${r.employee_id}_${r.date}`;
                   const input = ratingInputs[reportKey] || { rating: 100, attendance: 'Present', overtime: 0 };
                   const isLocked = r.approval_status === 'Approved' || r.approval_status === 'Auto Approved';
@@ -305,6 +384,20 @@ export default function HeadDashboard({ user, onOpenForm, onOpenConfig, onOpenFi
                       </td>
                       <td style={{ fontWeight: 800, color: 'var(--primary)' }}>
                         {r.final_score !== null && r.final_score !== undefined ? `${r.final_score}%` : 'Pending'}
+                        {r.fine_amount > 0 && (
+                          <div style={{ marginTop: '4px' }}>
+                            <a
+                              href={`/api/fines/${r.fine_doc_url ? r.fine_doc_url.split('/').pop() : ''}/document`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="badge badge-danger"
+                              style={{ textDecoration: 'none', fontSize: '0.7rem' }}
+                              title={r.employee_remarks ? `Remarks: ${r.employee_remarks}` : 'View Fine Notice'}
+                            >
+                              ₹{r.fine_amount} ({r.fine_status || 'Pending'})
+                            </a>
+                          </div>
+                        )}
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '6px' }}>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-export default function EmployeeDashboard({ user, onOpenForm, onOpenKraSop, onOpenDetail }) {
+export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenKraSop, onOpenDetail }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ average: 0, reports: [], fines: [] });
   const [todayStatus, setTodayStatus] = useState({ bodFilled: false, eodFilled: false });
@@ -8,6 +8,14 @@ export default function EmployeeDashboard({ user, onOpenForm, onOpenKraSop, onOp
   const [eodData, setEodData] = useState(null);
   const [config, setConfig] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('All');
+
+  // Fine response state
+  const [selectedFine, setSelectedFine] = useState(null);
+  const [fineStatusChoice, setFineStatusChoice] = useState('Acknowledged');
+  const [employeeRemarks, setEmployeeRemarks] = useState('');
+  const [updatingFine, setUpdatingFine] = useState(false);
 
   useEffect(() => {
     fetchFormAndDashboard();
@@ -36,6 +44,40 @@ export default function EmployeeDashboard({ user, onOpenForm, onOpenKraSop, onOp
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenFineResponse = (fine) => {
+    setSelectedFine(fine);
+    setFineStatusChoice(fine.status === 'Pending' ? 'Acknowledged' : fine.status);
+    setEmployeeRemarks(fine.employee_remarks || '');
+  };
+
+  const handleSaveFineResponse = async (e) => {
+    e.preventDefault();
+    if (!selectedFine) return;
+    setUpdatingFine(true);
+    try {
+      const res = await fetch('/api/fines/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fineId: selectedFine.id,
+          status: fineStatusChoice,
+          employeeRemarks: employeeRemarks.trim()
+        })
+      });
+      const resData = await res.json();
+      if (resData.success) {
+        setSelectedFine(null);
+        fetchFormAndDashboard();
+      } else {
+        alert(resData.message || 'Failed to update fine.');
+      }
+    } catch (err) {
+      alert('Error updating fine status.');
+    } finally {
+      setUpdatingFine(false);
     }
   };
 
@@ -160,12 +202,104 @@ export default function EmployeeDashboard({ user, onOpenForm, onOpenKraSop, onOp
         </div>
       </div>
 
+      {/* Fine Notices Section */}
+      {data.fines && data.fines.length > 0 && (
+        <div className="app-card" style={{ borderColor: '#fca5a5' }}>
+          <div className="section-header">
+            <div>
+              <h2 className="section-title" style={{ color: 'var(--danger)' }}>
+                <i className="bi bi-exclamation-octagon-fill me-1"></i> Fine Notices ({data.fines.length})
+              </h2>
+              <p className="section-description">Disciplinary fine notices issued. Review, print official notice, and submit explanation/acknowledgment.</p>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '14px' }}>
+            {data.fines.map((f) => (
+              <div
+                key={f.id}
+                style={{
+                  background: 'var(--danger-light)',
+                  border: '1px solid #fca5a5',
+                  borderRadius: 'var(--radius)',
+                  padding: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between'
+                }}
+              >
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--danger)' }}>{f.id} • {f.date}</span>
+                    <span className={`badge ${f.status === 'Acknowledged' ? 'badge-approved' : f.status === 'Disputed' ? 'badge-pending' : 'badge-danger'}`}>
+                      {f.status || 'Pending'}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '1.3rem', fontWeight: 800, color: 'var(--danger)', marginBottom: '6px' }}>
+                    ₹{f.amount}
+                  </div>
+                  <p style={{ fontSize: '0.82rem', color: 'var(--ink)', marginBottom: '8px' }}>
+                    <strong>Reason:</strong> {f.reason}
+                  </p>
+                  {f.employee_remarks && (
+                    <div style={{ fontSize: '0.78rem', background: 'white', border: '1px solid #fed7aa', padding: '6px 10px', borderRadius: '6px', marginBottom: '10px', color: 'var(--ink)' }}>
+                      <strong>Your Remarks:</strong> {f.employee_remarks}
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                  <a
+                    href={`/api/fines/${f.id}/document`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-secondary btn-sm"
+                    style={{ flex: 1 }}
+                  >
+                    <i className="bi bi-file-earmark-pdf me-1"></i> View Notice
+                  </a>
+                  <button
+                    className="btn btn-primary btn-sm"
+                    style={{ flex: 1 }}
+                    onClick={() => handleOpenFineResponse(f)}
+                  >
+                    <i className="bi bi-pencil-square me-1"></i> Respond
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Report History Table */}
       <div className="app-card">
         <div className="section-header">
           <div>
             <h2 className="section-title">Report History</h2>
             <p className="section-description">Review details, ratings, and feedback on completed reports.</p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type="text"
+              className="form-control"
+              style={{ width: '180px', padding: '6px 12px', fontSize: '0.82rem' }}
+              placeholder="Search date..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            <select
+              className="form-select"
+              style={{ width: '150px', padding: '6px 12px', fontSize: '0.82rem' }}
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+            >
+              <option value="All">All Statuses</option>
+              <option value="Pending">Pending Review</option>
+              <option value="Approved">Approved</option>
+              <option value="Auto Approved">Auto Approved</option>
+            </select>
           </div>
         </div>
 
@@ -183,14 +317,27 @@ export default function EmployeeDashboard({ user, onOpenForm, onOpenKraSop, onOp
               </tr>
             </thead>
             <tbody>
-              {data.reports.length === 0 ? (
-                <tr>
-                  <td colSpan="7" style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '24px' }}>
-                    No reports submitted yet.
-                  </td>
-                </tr>
-              ) : (
-                data.reports.map((r) => (
+              {(() => {
+                const filtered = (data.reports || []).filter(r => {
+                  const matchesSearch = !searchTerm || r.date.includes(searchTerm);
+                  const matchesStatus = statusFilter === 'All' ||
+                    (statusFilter === 'Pending' && r.approval_status === 'Pending Review') ||
+                    (statusFilter === 'Approved' && r.approval_status === 'Approved') ||
+                    (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved');
+                  return matchesSearch && matchesStatus;
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <tr>
+                      <td colSpan="7" style={{ textAlign: 'center', color: 'var(--ink-muted)', padding: '24px' }}>
+                        No reports match your selected criteria.
+                      </td>
+                    </tr>
+                  );
+                }
+
+                return filtered.map((r) => (
                   <tr key={r.id || r.date}>
                     <td style={{ fontWeight: 600 }}>{r.date}</td>
                     <td>{r.system_score ?? r.sysScore ?? '-'}%</td>
@@ -212,12 +359,85 @@ export default function EmployeeDashboard({ user, onOpenForm, onOpenKraSop, onOp
                       </button>
                     </td>
                   </tr>
-                ))
-              )}
+                ));
+              })()}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Employee Fine Response Modal */}
+      {selectedFine && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <div>
+                <h3 style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--danger)' }}>
+                  🛑 Fine Response: {selectedFine.id}
+                </h3>
+                <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
+                  Task Date: {selectedFine.date} • Amount: ₹{selectedFine.amount}
+                </p>
+              </div>
+              <button className="btn btn-secondary btn-sm" onClick={() => setSelectedFine(null)}>
+                <i className="bi bi-x-lg"></i>
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveFineResponse} style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+              <div className="modal-body">
+                <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--line)', padding: '14px', borderRadius: '8px', marginBottom: '16px' }}>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--ink-muted)', textTransform: 'uppercase' }}>Reason Given:</span>
+                  <p style={{ fontSize: '0.88rem', color: 'var(--ink)', margin: '4px 0 0' }}>{selectedFine.reason}</p>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Response Action</label>
+                  <select
+                    className="form-select"
+                    value={fineStatusChoice}
+                    onChange={(e) => setFineStatusChoice(e.target.value)}
+                  >
+                    <option value="Acknowledged">Acknowledge Fine (Accept Penalty)</option>
+                    <option value="Disputed">Dispute Fine (Request Review by Head)</option>
+                  </select>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Employee Remarks / Explanation</label>
+                  <textarea
+                    className="form-control"
+                    rows="4"
+                    placeholder="Provide your explanation, justification, or acknowledgment remarks..."
+                    value={employeeRemarks}
+                    onChange={(e) => setEmployeeRemarks(e.target.value)}
+                  ></textarea>
+                </div>
+
+                <div style={{ textAlign: 'right' }}>
+                  <a
+                    href={`/api/fines/${selectedFine.id}/document`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 600 }}
+                  >
+                    <i className="bi bi-box-arrow-up-right me-1"></i> Open Printable Fine Document in New Tab
+                  </a>
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setSelectedFine(null)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={updatingFine}>
+                  {updatingFine ? 'Saving...' : 'Submit Response'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -81,6 +81,22 @@ export default function ReportDetailModal({ isOpen, onClose, report }) {
                           </div>
                         ))}
                       </div>
+                    ) : eTask?.type === 'categoryNumber' || bTask?.type === 'categoryNumber' ? (
+                      <div style={{ fontSize: '0.82rem' }}>
+                        <div style={{ display: 'flex', gap: '16px', marginBottom: '6px', color: 'var(--ink-muted)' }}>
+                          <span>Target Total: <strong>{bTask?.value ?? 'N/A'}</strong></span>
+                          <span>Achieved Total: <strong>{eTask?.value ?? 'N/A'}</strong></span>
+                        </div>
+                        {eTask?.subCategories && (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                            {Object.entries(eTask.subCategories).map(([cat, val]) => (
+                              <span key={cat} style={{ background: 'white', border: '1px solid var(--line)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
+                                {cat}: <strong>{val}</strong>
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ) : (
                       <div style={{ fontSize: '0.82rem', color: 'var(--ink-muted)', display: 'flex', gap: '16px' }}>
                         {bTask && <span>Target: <strong>{bTask.value ?? bTask.status ?? 'N/A'}</strong></span>}
@@ -94,9 +110,28 @@ export default function ReportDetailModal({ isOpen, onClose, report }) {
           )}
 
           {report.fine_amount > 0 && (
-            <div style={{ marginTop: '16px', background: 'var(--danger-light)', border: '1px solid #fca5a5', padding: '12px', borderRadius: '8px' }}>
-              <strong style={{ color: 'var(--danger)', fontSize: '0.85rem' }}>🛑 Fine Issued: ₹{report.fine_amount}</strong>
-              <p style={{ fontSize: '0.8rem', color: 'var(--ink)', margin: '4px 0 0' }}>Reason: {report.fine_reason}</p>
+            <div style={{ marginTop: '16px', background: 'var(--danger-light)', border: '1px solid #fca5a5', padding: '14px', borderRadius: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ color: 'var(--danger)', fontSize: '0.9rem' }}>🛑 Fine Issued: ₹{report.fine_amount}</strong>
+                {report.fine_doc_url && (
+                  <a
+                    href={report.fine_doc_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn btn-secondary btn-sm"
+                    style={{ fontSize: '0.75rem', padding: '4px 10px' }}
+                  >
+                    <i className="bi bi-file-earmark-text me-1"></i> View Official Notice
+                  </a>
+                )}
+              </div>
+              <p style={{ fontSize: '0.84rem', color: 'var(--ink)', margin: '6px 0 0' }}>Reason: {report.fine_reason}</p>
+              {report.fine_status && (
+                <div style={{ marginTop: '6px', fontSize: '0.78rem', color: 'var(--ink-muted)' }}>
+                  Status: <strong>{report.fine_status}</strong>
+                  {report.employee_remarks ? ` • Remarks: ${report.employee_remarks}` : ''}
+                </div>
+              )}
             </div>
           )}
         </div>

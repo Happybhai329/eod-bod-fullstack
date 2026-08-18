@@ -27,13 +27,41 @@ let sheetsClient = null;
  * Initialize Google Sheets API client using Service Account
  */
 export async function initGoogleSheets() {
-  const credPath = path.join(__dirname, 'credentials.json');
-  if (!fs.existsSync(credPath)) {
-    console.error('[Google Sheets] credentials.json not found at', credPath);
+  let credentials = null;
+
+  // 1. Check environment variables (ideal for Render cloud deployment)
+  const envKey = process.env.GOOGLE_CREDENTIALS_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (envKey) {
+    try {
+      if (envKey.trim().startsWith('{')) {
+        credentials = JSON.parse(envKey.trim());
+      } else {
+        // Handle potential base64 encoded JSON
+        const decoded = Buffer.from(envKey, 'base64').toString('utf-8');
+        credentials = JSON.parse(decoded);
+      }
+    } catch (e) {
+      console.warn('[Google Sheets] Failed to parse credentials from environment variable:', e.message);
+    }
+  }
+
+  // 2. Check local credentials file
+  if (!credentials) {
+    const credPath = path.join(__dirname, 'credentials.json');
+    if (fs.existsSync(credPath)) {
+      try {
+        credentials = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
+      } catch (e) {
+        console.warn('[Google Sheets] Failed to parse credentials.json file:', e.message);
+      }
+    }
+  }
+
+  if (!credentials) {
+    console.log('[Google Sheets] No credentials configured. Sheets backup will be disabled.');
     return null;
   }
 
-  const credentials = JSON.parse(fs.readFileSync(credPath, 'utf-8'));
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
