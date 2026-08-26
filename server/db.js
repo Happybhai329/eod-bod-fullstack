@@ -69,7 +69,8 @@ const CONFLICT_KEYS = {
   fines: ['id'],
   notifications: ['id'],
   kras: ['id'],
-  sops: ['id']
+  sops: ['id'],
+  sync_logs: ['id']
 };
 
 export function transformInsertOrReplace(sql) {
@@ -320,6 +321,18 @@ export async function initDatabase() {
       checklist TEXT,
       form_fields TEXT,
       doc_link TEXT
+    )
+  `);
+
+  await run(`
+    CREATE TABLE IF NOT EXISTS sync_logs (
+      id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      direction TEXT NOT NULL,
+      status TEXT NOT NULL,
+      summary TEXT,
+      error_message TEXT
     )
   `);
 

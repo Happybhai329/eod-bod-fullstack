@@ -48,6 +48,20 @@ export default function App() {
   };
 
   useEffect(() => {
+    try {
+      const savedUser = localStorage.getItem('operations_hub_user');
+      if (savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.id) {
+          setUser(parsed);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to restore session from localStorage:', e);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!user) return;
     fetchUnreadNotifs();
     if (user.isHead) setActiveView('team');
@@ -69,12 +83,18 @@ export default function App() {
 
   const handleLogin = (loggedUser) => {
     setUser(loggedUser);
+    try {
+      localStorage.setItem('operations_hub_user', JSON.stringify(loggedUser));
+    } catch (e) {}
     showToast(`Welcome back, ${loggedUser.name}!`);
     if (loggedUser.isHead) setActiveView('team');
   };
 
   const handleLogout = () => {
     setUser(null);
+    try {
+      localStorage.removeItem('operations_hub_user');
+    } catch (e) {}
     showToast('Signed out successfully.', 'info');
   };
 

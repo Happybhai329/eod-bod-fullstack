@@ -5,6 +5,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initDatabase, query, run, get } from './db.js';
 import { syncDailyReportToSheets, syncFineToSheets } from './googleSheets.js';
+import { startAutoSync, runTwoWaySync, getSyncStatus } from './syncEngine.js';
 import {
   calculatePerformance,
   calculateFinalScore,
@@ -870,6 +871,27 @@ app.get('/api/sops/:kraId', async (req, res) => {
   }
 });
 
+// -------------------------------------------------------------
+// TWO-WAY SYNCHRONIZATION ROUTES
+// -------------------------------------------------------------
+app.get('/api/sync/status', async (req, res) => {
+  try {
+    const status = await getSyncStatus();
+    res.json({ success: true, ...status });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/sync/trigger', async (req, res) => {
+  try {
+    const result = await runTwoWaySync('MANUAL');
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // Static assets serving & SPA fallback
 const distPath = path.join(__dirname, '../dist');
 if (fs.existsSync(distPath)) {
@@ -889,6 +911,7 @@ if (isMainModule) {
   initDatabase().then(() => {
     app.listen(PORT, () => {
       console.log(`EOD/BOD Full Stack Server running at http://localhost:${PORT}`);
+      startAutoSync(15 * 60 * 1000);
     });
   }).catch(err => {
     console.error('Failed to initialize database:', err);

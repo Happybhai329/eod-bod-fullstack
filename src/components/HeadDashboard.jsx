@@ -8,11 +8,45 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
   const [myTaskConfig, setMyTaskConfig] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [syncStatus, setSyncStatus] = useState({ isSyncing: false, lastSyncTime: null, lastSyncStatus: 'IDLE' });
 
   useEffect(() => {
     fetchHeadDashboard();
     fetchMyConfig();
+    fetchSyncStatus();
   }, [user.id, filter]);
+
+  const fetchSyncStatus = async () => {
+    try {
+      const res = await fetch('/api/sync/status');
+      const result = await res.json();
+      if (result.success) {
+        setSyncStatus(result);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch sync status:', e);
+    }
+  };
+
+  const handleManualSync = async () => {
+    setSyncStatus(prev => ({ ...prev, isSyncing: true }));
+    if (showToast) showToast('Starting two-way synchronization with Google Sheets...', 'info');
+    try {
+      const res = await fetch('/api/sync/trigger', { method: 'POST' });
+      const result = await res.json();
+      if (result.success) {
+        if (showToast) showToast('Two-way synchronization completed successfully!');
+        fetchSyncStatus();
+        fetchHeadDashboard();
+      } else {
+        if (showToast) showToast(result.message || 'Sync notice: completed with warnings.', 'warning');
+      }
+    } catch (e) {
+      if (showToast) showToast('Failed to connect to sync service.', 'danger');
+    } finally {
+      setSyncStatus(prev => ({ ...prev, isSyncing: false }));
+    }
+  };
 
   const fetchHeadDashboard = async () => {
     setLoading(true);
@@ -157,6 +191,15 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
         </div>
 
         <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-secondary"
+            onClick={handleManualSync}
+            disabled={syncStatus.isSyncing}
+            title={syncStatus.lastSyncTime ? `Last synced: ${new Date(syncStatus.lastSyncTime).toLocaleTimeString()}` : 'Sync with Google Sheets'}
+          >
+            <i className={`bi bi-arrow-repeat ${syncStatus.isSyncing ? 'spin' : ''} me-1`}></i>
+            {syncStatus.isSyncing ? 'Syncing Sheets...' : 'Sync Sheets'}
+          </button>
           {(user?.role?.toLowerCase().includes('admin') || user?.isAdmin) && (
             <button className="btn btn-secondary" onClick={onOpenStructure}>
               <i className="bi bi-diagram-3 me-1"></i> Department Structure

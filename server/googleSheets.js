@@ -469,5 +469,62 @@ export async function syncFineToSheets(fine) {
   await appendRow(APP_DB_ID, 'Fines', rowValues);
 }
 
+/**
+ * Sync department head changes back to Google Sheets
+ */
+export async function syncDepartmentToSheets(dept) {
+  try {
+    const data = await readSheet(MASTER_DB_ID, 'Departments');
+    if (!data || data.length < 2) return;
+    const headers = data[0];
+    const nameIdx = headers.indexOf('DepartmentName');
+    const headIdIdx = headers.indexOf('HeadId');
+    const headNameIdx = headers.indexOf('HeadName');
+
+    let targetRow = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][nameIdx] === dept.name) {
+        targetRow = i + 1;
+        break;
+      }
+    }
+
+    if (targetRow > 0 && headIdIdx >= 0 && headNameIdx >= 0) {
+      const colLetterHeadId = String.fromCharCode(65 + headIdIdx);
+      const colLetterHeadName = String.fromCharCode(65 + headNameIdx);
+      await updateRange(MASTER_DB_ID, `Departments!${colLetterHeadId}${targetRow}`, [[dept.head_id || '']]);
+      await updateRange(MASTER_DB_ID, `Departments!${colLetterHeadName}${targetRow}`, [[dept.head_name || '']]);
+    }
+  } catch (err) {
+    console.warn('[Google Sheets] Department sync notice (ignored):', err.message);
+  }
+}
+
+/**
+ * Sync user task configuration back to Google Sheets
+ */
+export async function syncUserConfigToSheets(config) {
+  try {
+    const data = await readSheet(APP_DB_ID, 'User_Configs');
+    let targetRow = -1;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0] === config.employee_id) {
+        targetRow = i + 1;
+        break;
+      }
+    }
+
+    const rowValues = [config.employee_id, config.config_json, config.last_updated];
+    if (targetRow > 0) {
+      await updateRange(APP_DB_ID, `User_Configs!A${targetRow}:C${targetRow}`, [rowValues]);
+    } else {
+      await appendRow(APP_DB_ID, 'User_Configs', rowValues);
+    }
+  } catch (err) {
+    console.warn('[Google Sheets] User config sync notice (ignored):', err.message);
+  }
+}
+
 // Export spreadsheet IDs for use elsewhere
 export { MASTER_DB_ID, APP_DB_ID, KRA_SOP_DB_ID };
+
