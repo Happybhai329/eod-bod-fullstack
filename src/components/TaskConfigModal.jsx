@@ -12,7 +12,27 @@ export default function TaskConfigModal({ isOpen, onClose, empId, empName, onSav
       .then(res => res.json())
       .then(data => {
         if (data.success) {
-          setTasks(data.config || []);
+          const raw = data.config || [];
+          const normalized = raw.map((t, i) => {
+            const rawType = (t.type || t.inputType || 'number').toLowerCase();
+            let type = 'number';
+            if (rawType.includes('dynamic') || rawType.includes('list')) type = 'dynamicList';
+            else if (rawType.includes('check') || rawType.includes('bool')) type = 'checkbox';
+            else if (rawType.includes('category') || Array.isArray(t.subCategories) || Array.isArray(t.categories)) type = 'categoryNumber';
+            else type = 'number';
+
+            return {
+              key: t.key || t.taskKey || t.id || t.taskName || `task_${i}`,
+              label: t.label || t.taskName || t.name || `Task ${i + 1}`,
+              type,
+              target: t.target !== undefined ? Number(t.target) : 10,
+              weight: t.weight !== undefined ? Number(t.weight) : 0,
+              description: t.description || '',
+              categories: Array.isArray(t.categories) ? t.categories : (Array.isArray(t.subCategories) ? t.subCategories : []),
+              displayPhase: t.displayPhase || 'BOTH'
+            };
+          });
+          setTasks(normalized);
         }
       })
       .catch(console.error)

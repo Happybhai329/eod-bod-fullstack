@@ -1,92 +1,205 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+
+/**
+ * Normalizes task configurations from either Google Sheets (taskName/inputType)
+ * or standard schema (key/label/type).
+ */
+export function normalizeTasks(rawConfig) {
+  if (!Array.isArray(rawConfig) || rawConfig.length === 0) {
+    return [
+      {
+        key: 'daily_tasks',
+        label: "Today's Work Items & Objectives",
+        type: 'dynamicList',
+        description: 'Add and track your priority work items for today.',
+        displayPhase: 'BOTH',
+        target: 1,
+        weight: 100,
+        categories: []
+      }
+    ];
+  }
+
+  return rawConfig.map((task, idx) => {
+    const rawKey = task.key || task.taskKey || task.id || task.taskName || `task_${idx}`;
+    const key = typeof rawKey === 'string' ? rawKey.trim() : `task_${idx}`;
+    const label = (task.label || task.taskName || task.name || `Task ${idx + 1}`).trim();
+
+    // Determine task input type
+    let type = 'number';
+    const rawType = (task.type || task.inputType || '').toLowerCase();
+    if (rawType.includes('dynamic') || rawType.includes('list')) {
+      type = 'dynamicList';
+    } else if (rawType.includes('check') || rawType.includes('bool')) {
+      type = 'checkbox';
+    } else if (rawType.includes('category') || Array.isArray(task.subCategories) || Array.isArray(task.categories)) {
+      type = 'categoryNumber';
+    } else if (rawType.includes('num') || rawType.includes('count') || rawType.includes('target')) {
+      type = 'number';
+    } else if (Array.isArray(task.subCategories) && task.subCategories.length > 0) {
+      type = 'categoryNumber';
+    } else {
+      type = 'dynamicList';
+    }
+
+    const categories = Array.isArray(task.categories) && task.categories.length > 0
+      ? task.categories
+      : (Array.isArray(task.subCategories) && task.subCategories.length > 0 ? task.subCategories : ['General']);
+
+    const displayPhase = (task.displayPhase || 'BOTH').toUpperCase();
+    const target = task.target !== undefined ? Number(task.target) : (task.defaultTarget !== undefined ? Number(task.defaultTarget) : 1);
+    const weight = task.weight !== undefined ? Number(task.weight) : (task.weightage !== undefined ? Number(task.weightage) : null);
+    const description = task.description || '';
+
+    return {
+      key,
+      label,
+      type,
+      categories,
+      displayPhase,
+      target,
+      weight,
+      description,
+      rawTask: task
+    };
+  });
+}
 
 export default function BodEodFormModal({ isOpen, onClose, phase, config, initialBodData, initialEodData, onSave }) {
   const [formData, setFormData] = useState({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  const normalizedTasks = useMemo(() => normalizeTasks(config), [config]);
+
+  const visibleTasks = useMemo(() => {
+    const filtered = normalizedTasks.filter(t => t.displayPhase === 'BOTH' || t.displayPhase === phase);
+    return filtered.length > 0 ? filtered : normalizedTasks;
+  }, [normalizedTasks, phase]);
+
   useEffect(() => {
     if (!isOpen) return;
     const initial = {};
 
-    config.forEach((task) => {
+    const findExisting = (dataObj, task) => {
+      if (!dataObj) return null;
+      if (dataObj[task.key]) return dataObj[task.key];
+      if (task.rawTask?.taskName && dataObj[task.rawTask.taskName]) return dataObj[task.rawTask.taskName];
+      if (task.label && dataObj[task.label]) return dataObj[task.label];
+      return null;
+    };
+
+    visibleTasks.forEach((task) => {
       const taskKey = task.key;
-      const existingBod = initialBodData && initialBodData[taskKey] ? initialBodData[taskKey] : null;
-      const existingEod = initialEodData && initialEodData[taskKey] ? initialEodData[taskKey] : null;
+      const existingBod = findExisting(initialBodData, task);
+      const existingEod = findExisting(initialEodData, task);
 
       if (phase === 'BOD') {
         if (task.type === 'number') {
-          initial[taskKey] = { value: existingBod ? existingBod.value : task.target || 0, type: 'number' };
+          initial[taskKey] = {
+            value: existingBod?.value !== undefined ? existingBod.value : task.target || 0,
+            type: 'number'
+          };
         } else if (task.type === 'checkbox') {
-          initial[taskKey] = { status: existingBod ? existingBod.status : 'Pending', type: 'checkbox' };
+          initial[taskKey] = {
+            status: existingBod?.status || 'Pending',
+            type: 'checkbox'
+          };
         } else if (task.type === 'categoryNumber') {
+          const subMap = existingBod?.subCategories || {};
+          task.categories.forEach(cat => {
+            if (subMap[cat] === undefined) subMap[cat] = 0;
+          });
+          const sum = Object.values(subMap).reduce((a, b) => a + (Number(b) || 0), 0);
           initial[taskKey] = {
             type: 'categoryNumber',
-            value: existingBod ? existingBod.value : task.target || 0,
-            subCategories: existingBod?.subCategories || {}
+            value: existingBod?.value !== undefined ? existingBod.value : sum,
+            subCategories: subMap
           };
-        } else if (task.type === 'dynamicList') {
+        } else {
+          // dynamicList
           initial[taskKey] = {
             type: 'dynamicList',
-            list: existingBod && existingBod.list ? existingBod.list : [
-              { text: '', hasTarget: true, target: 1, achieved: 0, status: 'Pending', isVoluntary: false }
-            ]
+            list: existingBod && Array.isArray(existingBod.list) && existingBod.list.length > 0
+              ? existingBod.list
+              : [
+                  { text: '', hasTarget: true, target: 1, achieved: 0, status: 'Pending', isVoluntary: false }
+                ]
           };
         }
       } else {
         // EOD phase
         if (task.type === 'number') {
+          const fallbackTarget = existingBod?.value !== undefined ? existingBod.value : (task.target || 0);
           initial[taskKey] = {
-            value: existingEod ? existingEod.value : (existingBod ? existingBod.value : task.target || 0),
+            value: existingEod?.value !== undefined ? existingEod.value : fallbackTarget,
             type: 'number'
           };
         } else if (task.type === 'checkbox') {
           initial[taskKey] = {
-            status: existingEod ? existingEod.status : 'Done',
+            status: existingEod?.status || 'Done',
             type: 'checkbox'
           };
         } else if (task.type === 'categoryNumber') {
+          const subMap = existingEod?.subCategories || existingBod?.subCategories || {};
+          task.categories.forEach(cat => {
+            if (subMap[cat] === undefined) subMap[cat] = 0;
+          });
+          const sum = Object.values(subMap).reduce((a, b) => a + (Number(b) || 0), 0);
           initial[taskKey] = {
             type: 'categoryNumber',
-            value: existingEod ? existingEod.value : (existingBod ? existingBod.value : task.target || 0),
-            subCategories: existingEod?.subCategories || existingBod?.subCategories || {}
+            value: existingEod?.value !== undefined ? existingEod.value : sum,
+            subCategories: subMap
           };
-        } else if (task.type === 'dynamicList') {
-          initial[taskKey] = {
-            type: 'dynamicList',
-            list: existingEod && existingEod.list ? existingEod.list : (
-              existingBod && existingBod.list ? existingBod.list.map(item => ({ ...item, status: 'Done', achieved: item.target || 1 })) : [
+        } else {
+          // dynamicList
+          if (existingEod && Array.isArray(existingEod.list) && existingEod.list.length > 0) {
+            initial[taskKey] = { type: 'dynamicList', list: existingEod.list };
+          } else if (existingBod && Array.isArray(existingBod.list) && existingBod.list.length > 0) {
+            initial[taskKey] = {
+              type: 'dynamicList',
+              list: existingBod.list.map(item => ({
+                ...item,
+                status: 'Done',
+                achieved: item.target || 1
+              }))
+            };
+          } else {
+            initial[taskKey] = {
+              type: 'dynamicList',
+              list: [
                 { text: '', hasTarget: true, target: 1, achieved: 1, status: 'Done', isVoluntary: false }
               ]
-            )
-          };
+            };
+          }
         }
       }
     });
 
     setFormData(initial);
-  }, [isOpen, phase, config, initialBodData, initialEodData]);
+  }, [isOpen, phase, visibleTasks, initialBodData, initialEodData]);
 
   if (!isOpen) return null;
 
   const handleNumberChange = (key, val) => {
     setFormData(prev => ({
       ...prev,
-      [key]: { ...prev[key], value: Number(val) }
+      [key]: { ...prev[key], value: Number(val) || 0, type: 'number' }
     }));
   };
 
   const handleSubCategoryChange = (taskKey, catName, val) => {
     setFormData(prev => {
       const currentTask = prev[taskKey] || { type: 'categoryNumber', subCategories: {} };
-      const updatedSub = { ...(currentTask.subCategories || {}), [catName]: Number(val) };
+      const updatedSub = { ...(currentTask.subCategories || {}), [catName]: Number(val) || 0 };
       const sum = Object.values(updatedSub).reduce((a, b) => a + (Number(b) || 0), 0);
       return {
         ...prev,
         [taskKey]: {
           ...currentTask,
           subCategories: updatedSub,
-          value: sum
+          value: sum,
+          type: 'categoryNumber'
         }
       };
     });
@@ -95,7 +208,7 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
   const handleCheckboxChange = (key, isChecked) => {
     setFormData(prev => ({
       ...prev,
-      [key]: { ...prev[key], status: isChecked ? 'Done' : 'Pending' }
+      [key]: { ...prev[key], status: isChecked ? 'Done' : 'Pending', type: 'checkbox' }
     }));
   };
 
@@ -106,7 +219,11 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
         ...prev,
         [taskKey]: {
           ...prev[taskKey],
-          list: [...currentList, { text: '', hasTarget: true, target: 1, achieved: 0, status: 'Pending', isVoluntary: false }]
+          type: 'dynamicList',
+          list: [
+            ...currentList,
+            { text: '', hasTarget: true, target: 1, achieved: phase === 'EOD' ? 1 : 0, status: phase === 'EOD' ? 'Done' : 'Pending', isVoluntary: false }
+          ]
         }
       };
     });
@@ -118,7 +235,7 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
       currentList.splice(index, 1);
       return {
         ...prev,
-        [taskKey]: { ...prev[taskKey], list: currentList }
+        [taskKey]: { ...prev[taskKey], type: 'dynamicList', list: currentList }
       };
     });
   };
@@ -129,7 +246,7 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
       currentList[index] = { ...currentList[index], [field]: val };
       return {
         ...prev,
-        [taskKey]: { ...prev[taskKey], list: currentList }
+        [taskKey]: { ...prev[taskKey], type: 'dynamicList', list: currentList }
       };
     });
   };
@@ -149,9 +266,10 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
   };
 
   const computeLiveScore = () => {
-    if (phase !== 'EOD' || !config || config.length === 0) return null;
+    if (phase !== 'EOD' || visibleTasks.length === 0) return null;
     const scores = [];
-    config.forEach(task => {
+
+    visibleTasks.forEach(task => {
       const taskKey = task.key;
       const eTask = formData[taskKey];
       if (!eTask) return;
@@ -159,7 +277,7 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
       let target = Number(bTask.value) || task.target || 1;
       let achieved = 0;
 
-      if (eTask.type === 'dynamicList') {
+      if (eTask.type === 'dynamicList' || Array.isArray(eTask.list)) {
         let tSum = 0;
         let aSum = 0;
         (eTask.list || []).forEach(item => {
@@ -170,16 +288,16 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
         });
         target = tSum || 1;
         achieved = aSum;
-      } else if (eTask.type === 'checkbox') {
+      } else if (eTask.type === 'checkbox' || eTask.status !== undefined) {
         achieved = eTask.status === 'Done' ? target : 0;
-      } else if (eTask.type === 'number') {
-        achieved = Number(eTask.value) || 0;
-      } else if (eTask.type === 'categoryNumber') {
+      } else if (eTask.type === 'categoryNumber' || eTask.subCategories) {
         if (eTask.subCategories) {
           achieved = Object.values(eTask.subCategories).reduce((s, v) => s + (Number(v) || 0), 0);
         } else {
           achieved = Number(eTask.value) || 0;
         }
+      } else {
+        achieved = Number(eTask.value) || 0;
       }
 
       const p = target <= 0 ? 100 : (achieved / target) * 100;
@@ -195,14 +313,14 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content">
+      <div className="modal-content" style={{ maxWidth: '680px' }}>
         <div className="modal-header">
           <div>
             <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
               {phase === 'BOD' ? '🌅 Beginning of Day (BOD) Plan' : '🌆 End of Day (EOD) Progress'}
             </h3>
             <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
-              {phase === 'BOD' ? 'Set today\'s targets and priority work items.' : 'Record actual completions and progress.'}
+              {phase === 'BOD' ? "Set today's targets and priority work items." : 'Record actual completions and progress.'}
             </p>
           </div>
           <button className="btn btn-secondary btn-sm" onClick={onClose}>
@@ -241,7 +359,7 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
               </div>
             )}
 
-            {config.map((task) => {
+            {visibleTasks.map((task) => {
               const taskKey = task.key;
               const taskState = formData[taskKey] || {};
 
@@ -260,21 +378,24 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
                     <label style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--ink)' }}>
                       {task.label}
                     </label>
-                    <span className="badge badge-auto" style={{ textTransform: 'uppercase', fontSize: '0.68rem' }}>
-                      {task.type} {task.weight ? `(${task.weight}% weight)` : ''}
+                    <span className="badge badge-auto" style={{ textTransform: 'uppercase', fontSize: '0.68rem', fontWeight: 700 }}>
+                      {task.type === 'dynamicList' ? 'Checklist / Subtasks' : task.type === 'checkbox' ? 'Checkbox' : task.type === 'categoryNumber' ? 'Categorized' : 'Numeric Target'}
+                      {task.weight ? ` • ${task.weight}%` : ''}
                     </span>
                   </div>
+
                   {task.description && (
                     <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)', marginBottom: '12px' }}>
                       {task.description}
                     </p>
                   )}
 
+                  {/* 1. NUMERIC TASK */}
                   {task.type === 'number' && (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                       <div style={{ flex: 1 }}>
                         <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', display: 'block', marginBottom: '4px' }}>
-                          {phase === 'BOD' ? 'Target Quantity' : 'Achieved Quantity'}
+                          {phase === 'BOD' ? 'Planned Target Quantity' : 'Actual Achieved Quantity'}
                         </span>
                         <input
                           type="number"
@@ -286,16 +407,17 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
                       </div>
                       {phase === 'EOD' && initialBodData && initialBodData[taskKey] && (
                         <div style={{ background: 'white', border: '1px solid var(--line)', padding: '8px 12px', borderRadius: '6px', textAlign: 'center' }}>
-                          <small style={{ color: 'var(--ink-muted)', fontSize: '0.7rem', display: 'block' }}>Target</small>
+                          <small style={{ color: 'var(--ink-muted)', fontSize: '0.7rem', display: 'block' }}>BOD Target</small>
                           <strong style={{ fontSize: '1rem', color: 'var(--ink)' }}>{initialBodData[taskKey].value || 0}</strong>
                         </div>
                       )}
                     </div>
                   )}
 
+                  {/* 2. CATEGORY NUMBER TASK */}
                   {task.type === 'categoryNumber' && (
                     <div>
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '8px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '10px' }}>
                         {(Array.isArray(task.categories) && task.categories.length > 0 ? task.categories : ['General']).map((cat) => (
                           <div key={cat} style={{ background: 'white', border: '1px solid var(--line)', borderRadius: '6px', padding: '8px' }}>
                             <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--ink)', display: 'block', marginBottom: '4px' }}>
@@ -315,26 +437,30 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--primary-light)', padding: '8px 12px', borderRadius: '6px', fontSize: '0.82rem' }}>
                         <span>Total Sum: <strong>{taskState.value || 0}</strong></span>
                         {phase === 'EOD' && initialBodData && initialBodData[taskKey] && (
-                          <span style={{ color: 'var(--ink-muted)' }}>Target: <strong>{initialBodData[taskKey].value || task.target || 0}</strong></span>
+                          <span style={{ color: 'var(--ink-muted)' }}>BOD Target: <strong>{initialBodData[taskKey].value || task.target || 0}</strong></span>
                         )}
                       </div>
                     </div>
                   )}
 
+                  {/* 3. CHECKBOX TASK */}
                   {task.type === 'checkbox' && (
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', padding: '6px 0' }}>
-                      <input
-                        type="checkbox"
-                        style={{ width: '18px', height: '18px' }}
-                        checked={taskState.status === 'Done'}
-                        onChange={(e) => handleCheckboxChange(taskKey, e.target.checked)}
-                      />
-                      <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>
-                        {taskState.status === 'Done' ? 'Completed / Done' : 'Pending Completion'}
-                      </span>
-                    </label>
+                    <div style={{ background: 'white', border: '1px solid var(--line)', borderRadius: '8px', padding: '10px 14px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          style={{ width: '20px', height: '20px', accentColor: 'var(--primary)' }}
+                          checked={taskState.status === 'Done'}
+                          onChange={(e) => handleCheckboxChange(taskKey, e.target.checked)}
+                        />
+                        <span style={{ fontWeight: 600, fontSize: '0.9rem', color: taskState.status === 'Done' ? 'var(--success)' : 'var(--ink)' }}>
+                          {taskState.status === 'Done' ? '✅ Completed / Done' : '⏳ Pending Completion'}
+                        </span>
+                      </label>
+                    </div>
                   )}
 
+                  {/* 4. DYNAMIC LIST TASK */}
                   {task.type === 'dynamicList' && (
                     <div>
                       {(taskState.list || []).map((item, idx) => (
@@ -355,56 +481,67 @@ export default function BodEodFormModal({ isOpen, onClose, phase, config, initia
                             <input
                               type="text"
                               className="form-control"
-                              placeholder="Action item / task title..."
+                              placeholder={`Action item #${idx + 1} description...`}
                               value={item.text}
                               onChange={(e) => handleListItemChange(taskKey, idx, 'text', e.target.value)}
                             />
-                            <button
-                              type="button"
-                              className="btn btn-secondary btn-sm"
-                              style={{ color: 'var(--danger)', padding: '6px 10px' }}
-                              onClick={() => handleRemoveListItem(taskKey, idx)}
-                            >
-                              <i className="bi bi-trash"></i>
-                            </button>
+                            {(taskState.list || []).length > 1 && (
+                              <button
+                                type="button"
+                                className="btn btn-secondary btn-sm"
+                                style={{ color: 'var(--danger)', padding: '6px 10px' }}
+                                title="Remove item"
+                                onClick={() => handleRemoveListItem(taskKey, idx)}
+                              >
+                                <i className="bi bi-trash"></i>
+                              </button>
+                            )}
                           </div>
 
                           <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap', fontSize: '0.8rem' }}>
                             {phase === 'BOD' ? (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span>Target Count:</span>
+                                <span>Target Units:</span>
                                 <input
                                   type="number"
                                   min="1"
                                   className="form-control"
                                   style={{ width: '80px', padding: '4px 8px' }}
                                   value={item.target || 1}
-                                  onChange={(e) => handleListItemChange(taskKey, idx, 'target', Number(e.target.value))}
+                                  onChange={(e) => handleListItemChange(taskKey, idx, 'target', Number(e.target.value) || 1)}
                                 />
                               </div>
                             ) : (
                               <>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <span>Achieved Count:</span>
+                                  <span>Achieved Units:</span>
                                   <input
                                     type="number"
                                     min="0"
                                     className="form-control"
                                     style={{ width: '80px', padding: '4px 8px' }}
                                     value={item.achieved !== undefined ? item.achieved : 1}
-                                    onChange={(e) => handleListItemChange(taskKey, idx, 'achieved', Number(e.target.value))}
+                                    onChange={(e) => handleListItemChange(taskKey, idx, 'achieved', Number(e.target.value) || 0)}
                                   />
                                 </div>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', margin: 0 }}>
                                   <input
                                     type="checkbox"
                                     checked={item.status === 'Done'}
                                     onChange={(e) => handleListItemChange(taskKey, idx, 'status', e.target.checked ? 'Done' : 'Pending')}
                                   />
-                                  Completed
+                                  Done
                                 </label>
                               </>
                             )}
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', margin: 0, color: 'var(--ink-muted)' }}>
+                              <input
+                                type="checkbox"
+                                checked={!!item.isVoluntary}
+                                onChange={(e) => handleListItemChange(taskKey, idx, 'isVoluntary', e.target.checked)}
+                              />
+                              Voluntary / Bonus
+                            </label>
                           </div>
                         </div>
                       ))}
