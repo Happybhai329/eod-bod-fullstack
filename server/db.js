@@ -188,6 +188,13 @@ export async function initDatabase() {
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS sub_department TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_department TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS designation TEXT;
+
+      UPDATE employees SET emp_id = COALESCE(emp_id, "employeeId", id) WHERE emp_id IS NULL;
+      UPDATE departments SET name = COALESCE(name, "departmentName") WHERE name IS NULL;
+      UPDATE departments SET head_id = COALESCE(head_id, "headId") WHERE head_id IS NULL;
+      UPDATE departments SET head_name = COALESCE(head_name, "headName") WHERE head_name IS NULL;
+      UPDATE employees SET sub_department = COALESCE(sub_department, "subDepartment") WHERE sub_department IS NULL;
+      UPDATE employees SET designation = COALESCE(designation, role) WHERE designation IS NULL;
     `);
   } else {
     try {

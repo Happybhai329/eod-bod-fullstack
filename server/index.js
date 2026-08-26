@@ -200,7 +200,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/hierarchy', async (req, res) => {
   try {
     const departments = await query(`SELECT * FROM departments`);
-    const employees = await query(`SELECT * FROM employees WHERE status = 'Active'`);
+    const employees = await query(`SELECT * FROM employees WHERE LOWER(status) = 'active'`);
     res.json({ success: true, departments, employees });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -213,17 +213,18 @@ app.post('/api/structure/assign', async (req, res) => {
     if (!subDeptName || !headId) return res.status(400).json({ success: false, message: 'Sub-department name and head ID required.' });
     
     if (requesterId) {
-      const requester = await get(`SELECT * FROM employees WHERE id = ?`, [requesterId]);
+      const requester = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [requesterId, requesterId]);
       const isAdmin = requester && (requester.role.toLowerCase().includes('admin') || requester.role.toLowerCase().includes('director'));
       if (!isAdmin) {
         return res.status(403).json({ success: false, message: 'Unauthorized: Only System Administrators can reassign department heads.' });
       }
     }
 
-    const emp = await get(`SELECT * FROM employees WHERE id = ?`, [headId]);
+    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
-    await run(`UPDATE departments SET head_id = ?, head_name = ? WHERE name = ?`, [emp.id, `${emp.name} (${emp.id})`, subDeptName]);
+    const effectiveId = emp.emp_id || emp.id;
+    await run(`UPDATE departments SET head_id = ?, head_name = ? WHERE name = ?`, [effectiveId, `${emp.name} (${effectiveId})`, subDeptName]);
     res.json({ success: true, message: `Assigned ${emp.name} as head of ${subDeptName}.` });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -234,7 +235,7 @@ app.post('/api/structure/remove', async (req, res) => {
   try {
     const { subDeptName, requesterId } = req.body;
     if (requesterId) {
-      const requester = await get(`SELECT * FROM employees WHERE id = ?`, [requesterId]);
+      const requester = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [requesterId, requesterId]);
       const isAdmin = requester && (requester.role.toLowerCase().includes('admin') || requester.role.toLowerCase().includes('director'));
       if (!isAdmin) {
         return res.status(403).json({ success: false, message: 'Unauthorized: Only System Administrators can remove department heads.' });
@@ -254,10 +255,10 @@ app.post('/api/structure/remove', async (req, res) => {
 app.get('/api/employee/:id/form', async (req, res) => {
   try {
     const empId = req.params.id;
-    const emp = await get(`SELECT * FROM employees WHERE id = ? AND status = 'Active'`, [empId]);
+    const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found or inactive.' });
 
-    let userConfig = await get(`SELECT * FROM user_configs WHERE employee_id = ?`, [empId]);
+    let userConfig = await get(`SELECT * FROM user_configs WHERE employee_id = ? OR employee_id = ?`, [emp.id, emp.emp_id || emp.id]);
     let configObj = [];
     if (userConfig && userConfig.config_json) {
       try { configObj = JSON.parse(userConfig.config_json); } catch (e) {}
@@ -331,13 +332,14 @@ app.post('/api/employee/:id/report', async (req, res) => {
     const { phase, phaseData } = req.body;
     if (!['BOD', 'EOD'].includes(phase)) return res.status(400).json({ success: false, message: 'Invalid report phase.' });
 
-    const emp = await get(`SELECT * FROM employees WHERE id = ? AND status = 'Active'`, [empId]);
+    const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
+    const effectiveId = emp.emp_id || emp.id;
     const todayStr = getTodayString();
     const now = new Date();
     const safePhaseJSON = JSON.stringify(phaseData);
-    const existing = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [todayStr, empId]);
+    const existing = await get(`SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`, [todayStr, emp.id, effectiveId]);
 
     let savedReport = null;
     if (!existing) {
@@ -438,35 +440,54 @@ app.get('/api/head/dashboard', async (req, res) => {
     const { headId, filter = 'Weekly' } = req.query;
     if (!headId) return res.status(400).json({ success: false, message: 'Head ID is required.' });
 
+    const trimmedHeadId = headId.trim();
+    const headEmp = await get(
+      `SELECT * FROM employees WHERE id = ? OR emp_id = ?`,
+      [trimmedHeadId, trimmedHeadId]
+    );
+
+    const headCodes = [trimmedHeadId];
+    if (headEmp) {
+      if (headEmp.id) headCodes.push(headEmp.id);
+      if (headEmp.emp_id) headCodes.push(headEmp.emp_id);
+    }
+
     const depts = await query(`SELECT * FROM departments`);
-    const allEmps = await query(`SELECT * FROM employees WHERE status = 'Active'`);
+    const allEmps = await query(`SELECT * FROM employees WHERE LOWER(status) = 'active'`);
 
-    // Find all department names where head_id = headId
-    let directHeadDeptNames = depts.filter(d => d.head_id === headId).map(d => d.name);
-
-    // Find all sub-departments under those main departments
-    let childSubDeptNames = depts.filter(d => directHeadDeptNames.includes(d.parent)).map(d => d.name);
-    let allManagedDeptNames = [...new Set([...directHeadDeptNames, ...childSubDeptNames])];
+    // Find all department names where head_id matches any of the head's identifiers
+    let directHeadDeptNames = depts
+      .filter(d => headCodes.includes(d.head_id))
+      .map(d => d.name);
 
     // Fallback: If user isn't assigned as head_id in departments table, match by user's primary department
-    const userEmp = allEmps.find(e => e.id === headId);
-    if (allManagedDeptNames.length === 0 && userEmp) {
-      allManagedDeptNames.push(userEmp.department);
-      if (userEmp.sub_department) allManagedDeptNames.push(userEmp.sub_department);
+    if (directHeadDeptNames.length === 0 && headEmp && headEmp.department) {
+      directHeadDeptNames.push(headEmp.department);
+      if (headEmp.sub_department) directHeadDeptNames.push(headEmp.sub_department);
     }
+
+    // Find all sub-departments under those main departments
+    let childSubDeptNames = depts
+      .filter(d => directHeadDeptNames.some(p => p && d.parent && p.toLowerCase().trim() === d.parent.toLowerCase().trim()))
+      .map(d => d.name);
+
+    let allManagedDeptNames = [...new Set([...directHeadDeptNames, ...childSubDeptNames])];
 
     const managedEmps = allEmps.filter(e =>
       allManagedDeptNames.some(dName =>
         (e.department && e.department.toLowerCase().trim() === dName.toLowerCase().trim()) ||
         (e.sub_department && e.sub_department.toLowerCase().trim() === dName.toLowerCase().trim()) ||
         (e.other_department && e.other_department.toLowerCase().includes(dName.toLowerCase().trim()))
-      ) || e.id === headId
+      ) || headCodes.includes(e.id) || headCodes.includes(e.emp_id)
     );
-    const managedEmpIds = managedEmps.map(e => e.id);
+
+    const managedEmpIds = new Set(
+      managedEmps.flatMap(e => [e.id, e.emp_id].filter(Boolean))
+    );
 
     let sql = `SELECT * FROM daily_reports WHERE eod_data IS NOT NULL AND eod_data != '' ORDER BY id DESC`;
     const allReports = await query(sql);
-    const reports = allReports.filter(r => managedEmpIds.includes(r.employee_id));
+    const reports = allReports.filter(r => managedEmpIds.has(r.employee_id));
 
     // Filter reports according to selected time period (Daily, Weekly, Monthly)
     const filteredReports = reports.filter(r => isDateInFilter(r.date, filter));
@@ -506,7 +527,7 @@ app.get('/api/head/dashboard', async (req, res) => {
         needsAttention: lowEmp,
         reports,
         filteredReports,
-        managedEmployees: managedEmps
+        managedEmployees: managedEmps.map(e => ({ ...e, id: e.emp_id || e.id }))
       }
     });
   } catch (err) {
@@ -535,7 +556,7 @@ app.post('/api/head/rate', async (req, res) => {
       return res.status(400).json({ success: false, message: `Report is already ${report.approval_status.toLowerCase()} and locked.` });
     }
 
-    const headUser = await get(`SELECT name FROM employees WHERE id = ?`, [headId]);
+    const headUser = await get(`SELECT name FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
     const raterName = headUser ? `${headUser.name} (${headId})` : `Head ${headId}`;
     const sysScore = parseScoreHelper(report.system_score, 100);
     const finalScore = calculateFinalScore(sysScore, numRating);
@@ -617,7 +638,7 @@ app.post('/api/fines/issue', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Employee ID, Date, Amount, and Reason are required.' });
     }
 
-    const headUser = await get(`SELECT name FROM employees WHERE id = ?`, [headId]);
+    const headUser = await get(`SELECT name FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
     const issuerName = headUser ? `${headUser.name} (${headId})` : `Head ${headId}`;
     const fineId = 'F' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
     const nowIso = new Date().toISOString();
@@ -704,7 +725,7 @@ app.get('/api/fines/:id/document', async (req, res) => {
     const fine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
     if (!fine) return res.status(404).send('<h2>Fine notice not found.</h2>');
 
-    const emp = await get(`SELECT * FROM employees WHERE id = ?`, [fine.employee_id]);
+    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [fine.employee_id, fine.employee_id]);
     const empName = emp ? emp.name : fine.employee_id;
     const dept = emp ? emp.department : 'Operations';
     const desig = emp ? emp.designation : 'Staff';
