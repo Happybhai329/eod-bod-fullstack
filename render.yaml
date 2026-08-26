@@ -11,5 +11,7 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: DATABASE_URL
+        sync: false
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false

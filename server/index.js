@@ -154,15 +154,23 @@ app.post('/api/auth/login', async (req, res) => {
     const { empId, role } = req.body;
     if (!empId) return res.status(400).json({ success: false, message: 'Employee ID is required.' });
 
-    const emp = await get(`SELECT * FROM employees WHERE id = ?`, [empId.trim()]);
+    const trimmedId = empId.trim();
+    const emp = await get(
+      `SELECT * FROM employees WHERE id = ? OR emp_id = ?`,
+      [trimmedId, trimmedId]
+    );
     if (!emp) return res.status(404).json({ success: false, message: 'Employee ID not found in system.' });
-    if (emp.status.toLowerCase() !== 'active') return res.status(403).json({ success: false, message: 'Access Denied: Account status is not Active.' });
+    if (emp.status && emp.status.toLowerCase() !== 'active') return res.status(403).json({ success: false, message: 'Access Denied: Account status is not Active.' });
 
-    const managedDepts = await query(`SELECT * FROM departments WHERE head_id = ?`, [emp.id]);
+    const effectiveId = emp.emp_id || emp.id;
+    const managedDepts = await query(
+      `SELECT * FROM departments WHERE head_id = ? OR head_id = ?`,
+      [emp.id, effectiveId]
+    );
     const isHead = (managedDepts && managedDepts.length > 0) ||
-      emp.role.toLowerCase().includes('head') ||
-      emp.role.toLowerCase().includes('admin') ||
-      emp.role.toLowerCase().includes('manager');
+      (emp.role && emp.role.toLowerCase().includes('head')) ||
+      (emp.role && emp.role.toLowerCase().includes('admin')) ||
+      (emp.role && emp.role.toLowerCase().includes('manager'));
 
     if (role === 'Head' && !isHead) {
       return res.status(403).json({ success: false, message: 'Access Denied: You do not have Head/Admin privileges.' });
@@ -171,11 +179,11 @@ app.post('/api/auth/login', async (req, res) => {
     res.json({
       success: true,
       user: {
-        id: emp.id,
+        id: effectiveId,
         name: emp.name,
         department: emp.department,
         subDepartment: emp.sub_department || '',
-        designation: emp.designation,
+        designation: emp.designation || emp.role || '',
         role: emp.role,
         isHead: isHead
       }

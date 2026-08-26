@@ -1,18 +1,117 @@
 import sqlite3 from 'sqlite3';
+import pg from 'pg';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
+
+const { Pool } = pg;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const dbPath = path.join(__dirname, 'database.sqlite');
 
-const db = new sqlite3.Database(dbPath);
+let pgPool = null;
+let sqliteDb = null;
+
+export function getIsPostgres() {
+  return Boolean(process.env.DATABASE_URL);
+}
+
+export function getPgPool() {
+  if (!pgPool && process.env.DATABASE_URL) {
+    console.log('[DB] 🐘 Initializing PostgreSQL engine (Supabase/Cloud)...');
+    const pgConfig = getPgConfig(process.env.DATABASE_URL);
+    pgPool = new Pool(pgConfig);
+  }
+  return pgPool;
+}
+
+export function getSqliteDb() {
+  if (!sqliteDb) {
+    console.log('[DB] 📁 Initializing SQLite engine (Local/Fallback)...');
+    sqliteDb = new sqlite3.Database(dbPath);
+  }
+  return sqliteDb;
+}
+
+function getPgConfig(dbUrl) {
+  try {
+    const u = new URL(dbUrl);
+    return {
+      host: u.hostname,
+      port: u.port ? parseInt(u.port, 10) : 5432,
+      database: u.pathname ? u.pathname.replace(/^\//, '') : 'postgres',
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      ssl: { rejectUnauthorized: false }
+    };
+  } catch (e) {
+    const m = dbUrl.match(/^postgres(?:ql)?:\/\/([^:]+):(.*)@([^:/]+)(?::(\d+))?\/(.+)$/);
+    if (m) {
+      return {
+        user: m[1],
+        password: m[2],
+        host: m[3],
+        port: m[4] ? parseInt(m[4], 10) : 5432,
+        database: m[5].split('?')[0],
+        ssl: { rejectUnauthorized: false }
+      };
+    }
+    return { connectionString: dbUrl, ssl: { rejectUnauthorized: false } };
+  }
+}
+
+const CONFLICT_KEYS = {
+  departments: ['name'],
+  employees: ['id'],
+  user_configs: ['employee_id'],
+  daily_reports: ['date', 'employee_id'],
+  fines: ['id'],
+  notifications: ['id'],
+  kras: ['id'],
+  sops: ['id']
+};
+
+export function transformInsertOrReplace(sql) {
+  const match = sql.match(/INSERT\s+OR\s+REPLACE\s+INTO\s+([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*VALUES\s*\(([\s\S]*?)\)/i);
+  if (!match) return sql;
+
+  const tableName = match[1].trim();
+  const rawCols = match[2];
+  const rawValues = match[3];
+
+  const cols = rawCols.split(',').map(c => c.trim().replace(/["`]/g, ''));
+  const conflictKeys = CONFLICT_KEYS[tableName.toLowerCase()] || [];
+
+  if (conflictKeys.length === 0) {
+    return sql.replace(/INSERT\s+OR\s+REPLACE\s+INTO/i, 'INSERT INTO');
+  }
+
+  const updateCols = cols.filter(c => !conflictKeys.includes(c.toLowerCase()));
+  const updateClause = updateCols.length > 0
+    ? `DO UPDATE SET ${updateCols.map(c => `"${c}" = EXCLUDED."${c}"`).join(', ')}`
+    : 'DO NOTHING';
+
+  return `INSERT INTO "${tableName}" (${cols.map(c => `"${c}"`).join(', ')}) VALUES (${rawValues}) ON CONFLICT (${conflictKeys.map(k => `"${k}"`).join(', ')}) ${updateClause}`;
+}
+
+export function formatSql(sql) {
+  if (!getIsPostgres()) return sql;
+  let s = sql;
+  if (/INSERT\s+OR\s+REPLACE\s+INTO/i.test(s)) {
+    s = transformInsertOrReplace(s);
+  }
+  let index = 0;
+  return s.replace(/\?/g, () => `$${++index}`);
+}
 
 // Helper for promise-based queries
 export function query(sql, params = []) {
+  if (getIsPostgres()) {
+    return getPgPool().query(formatSql(sql), params).then(res => res.rows);
+  }
   return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
+    getSqliteDb().all(sql, params, (err, rows) => {
       if (err) reject(err);
       else resolve(rows);
     });
@@ -20,8 +119,14 @@ export function query(sql, params = []) {
 }
 
 export function run(sql, params = []) {
+  if (getIsPostgres()) {
+    return getPgPool().query(formatSql(sql), params).then(res => ({
+      lastID: null,
+      changes: res.rowCount
+    }));
+  }
   return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
+    getSqliteDb().run(sql, params, function (err) {
       if (err) reject(err);
       else resolve({ lastID: this.lastID, changes: this.changes });
     });
@@ -29,8 +134,11 @@ export function run(sql, params = []) {
 }
 
 export function get(sql, params = []) {
+  if (getIsPostgres()) {
+    return getPgPool().query(formatSql(sql), params).then(res => res.rows[0] || null);
+  }
   return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
+    getSqliteDb().get(sql, params, (err, row) => {
       if (err) reject(err);
       else resolve(row);
     });
@@ -38,7 +146,10 @@ export function get(sql, params = []) {
 }
 
 export async function initDatabase() {
-  await run(`PRAGMA foreign_keys = ON;`);
+  const isPostgres = getIsPostgres();
+  if (!isPostgres) {
+    await run(`PRAGMA foreign_keys = ON;`);
+  }
 
   await run(`
     CREATE TABLE IF NOT EXISTS departments (
@@ -63,6 +174,28 @@ export async function initDatabase() {
     )
   `);
 
+  if (isPostgres) {
+    // Schema alignment for existing PostgreSQL/Supabase tables
+    await query(`
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS name TEXT;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS parent TEXT;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS head_id TEXT;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS head_name TEXT;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS is_main INTEGER DEFAULT 1;
+
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS emp_id TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS sub_department TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_department TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS designation TEXT;
+    `);
+  } else {
+    try {
+      await run(`ALTER TABLE employees ADD COLUMN emp_id TEXT;`);
+    } catch (e) {
+      // Column may already exist
+    }
+  }
+
   await run(`
     CREATE TABLE IF NOT EXISTS user_configs (
       employee_id TEXT PRIMARY KEY,
@@ -71,38 +204,73 @@ export async function initDatabase() {
     )
   `);
 
-  await run(`
-    CREATE TABLE IF NOT EXISTS daily_reports (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      date TEXT NOT NULL,
-      employee_id TEXT NOT NULL,
-      department TEXT NOT NULL,
-      bod_data TEXT,
-      eod_data TEXT,
-      system_score REAL,
-      last_updated TEXT,
-      head_rating REAL,
-      final_score REAL,
-      attendance TEXT DEFAULT 'Present',
-      overtime REAL DEFAULT 0,
-      rating_last_updated TEXT,
-      rating_edited_by TEXT,
-      approval_status TEXT DEFAULT 'Pending Review',
-      approval_timestamp TEXT,
-      expiry_timestamp TEXT,
-      rated_by TEXT,
-      rated_on TEXT,
-      fine_amount REAL,
-      fine_reason TEXT,
-      fine_doc_url TEXT,
-      fine_doc_name TEXT,
-      fine_issued_on TEXT,
-      fine_issued_by TEXT,
-      fine_status TEXT,
-      employee_remarks TEXT,
-      UNIQUE(date, employee_id)
-    )
-  `);
+  if (isPostgres) {
+    await run(`
+      CREATE TABLE IF NOT EXISTS daily_reports (
+        id SERIAL PRIMARY KEY,
+        date TEXT NOT NULL,
+        employee_id TEXT NOT NULL,
+        department TEXT NOT NULL,
+        bod_data TEXT,
+        eod_data TEXT,
+        system_score REAL,
+        last_updated TEXT,
+        head_rating REAL,
+        final_score REAL,
+        attendance TEXT DEFAULT 'Present',
+        overtime REAL DEFAULT 0,
+        rating_last_updated TEXT,
+        rating_edited_by TEXT,
+        approval_status TEXT DEFAULT 'Pending Review',
+        approval_timestamp TEXT,
+        expiry_timestamp TEXT,
+        rated_by TEXT,
+        rated_on TEXT,
+        fine_amount REAL,
+        fine_reason TEXT,
+        fine_doc_url TEXT,
+        fine_doc_name TEXT,
+        fine_issued_on TEXT,
+        fine_issued_by TEXT,
+        fine_status TEXT,
+        employee_remarks TEXT,
+        UNIQUE(date, employee_id)
+      )
+    `);
+  } else {
+    await run(`
+      CREATE TABLE IF NOT EXISTS daily_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        employee_id TEXT NOT NULL,
+        department TEXT NOT NULL,
+        bod_data TEXT,
+        eod_data TEXT,
+        system_score REAL,
+        last_updated TEXT,
+        head_rating REAL,
+        final_score REAL,
+        attendance TEXT DEFAULT 'Present',
+        overtime REAL DEFAULT 0,
+        rating_last_updated TEXT,
+        rating_edited_by TEXT,
+        approval_status TEXT DEFAULT 'Pending Review',
+        approval_timestamp TEXT,
+        expiry_timestamp TEXT,
+        rated_by TEXT,
+        rated_on TEXT,
+        fine_amount REAL,
+        fine_reason TEXT,
+        fine_doc_url TEXT,
+        fine_doc_name TEXT,
+        fine_issued_on TEXT,
+        fine_issued_by TEXT,
+        fine_status TEXT,
+        employee_remarks TEXT,
+        UNIQUE(date, employee_id)
+      )
+    `);
+  }
 
   await run(`
     CREATE TABLE IF NOT EXISTS fines (
@@ -160,7 +328,7 @@ export async function initDatabase() {
 
 async function seedInitialData() {
   const existingEmps = await query(`SELECT COUNT(*) as count FROM employees`);
-  if (existingEmps[0].count > 0) {
+  if (Number(existingEmps[0]?.count) > 0) {
     console.log('[DB] Database already populated — skipping seed.');
     return;
   }
@@ -298,9 +466,10 @@ async function seedFallbackData() {
     { name: 'Direct Sales', parent: 'Sales & Marketing', head_id: 'SUBHEAD01', head_name: 'Amit Patel (SUBHEAD01)', is_main: 0 },
     { name: 'Digital Marketing', parent: 'Sales & Marketing', head_id: 'SUBHEAD02', head_name: 'Priya Verma (SUBHEAD02)', is_main: 0 },
     { name: 'Academic Operations', parent: '', head_id: 'HEAD002', head_name: 'Dr. Sunita Gupta (HEAD002)', is_main: 1 },
-    { name: 'Faculty & Curriculum', parent: 'Academic Operations', head_id: 'SUBHEAD03', head_name: 'Vikram Singh (SUBHEAD03)', is_main: 0 },
-    { name: 'Human Resources', parent: '', head_id: 'HEAD003', head_name: 'Neha Kapoor (HEAD003)', is_main: 1 },
-    { name: 'Finance & Accounts', parent: '', head_id: 'HEAD004', head_name: 'Anil Agarwal (HEAD004)', is_main: 1 }
+    { name: 'Curriculum & Faculty', parent: 'Academic Operations', head_id: 'SUBHEAD03', head_name: 'Vikram Singh (SUBHEAD03)', is_main: 0 },
+    { name: 'Exam & Evaluations', parent: 'Academic Operations', head_id: 'SUBHEAD04', head_name: 'Anjali Deshmukh (SUBHEAD04)', is_main: 0 },
+    { name: 'Human Resources', parent: '', head_id: 'HEAD003', head_name: 'Kavita Nair (HEAD003)', is_main: 1 },
+    { name: 'Finance & Accounts', parent: '', head_id: 'HEAD004', head_name: 'Suresh Menon (HEAD004)', is_main: 1 }
   ];
   for (const d of departments) {
     await run(
@@ -311,94 +480,90 @@ async function seedFallbackData() {
 
   // 2. Fallback Employees
   const employees = [
-    { id: 'HEAD001', name: 'Rajesh Sharma', department: 'Sales & Marketing', sub_department: '', designation: 'VP of Sales', role: 'Head', status: 'Active' },
-    { id: 'SUBHEAD01', name: 'Amit Patel', department: 'Sales & Marketing', sub_department: 'Direct Sales', designation: 'Sales Manager', role: 'Head', status: 'Active' },
-    { id: 'SUBHEAD02', name: 'Priya Verma', department: 'Sales & Marketing', sub_department: 'Digital Marketing', designation: 'Marketing Lead', role: 'Head', status: 'Active' },
-    { id: 'TPC25107MR', name: 'Happy Bhasin', department: 'Sales & Marketing', sub_department: 'Direct Sales', designation: 'Senior Sales Executive', role: 'Employee', status: 'Active' },
-    { id: 'TPC25108AD', name: 'Aditi Sharma', department: 'Sales & Marketing', sub_department: 'Digital Marketing', designation: 'SEO Specialist', role: 'Employee', status: 'Active' },
-    { id: 'HEAD002', name: 'Dr. Sunita Gupta', department: 'Academic Operations', sub_department: '', designation: 'Academic Director', role: 'Head', status: 'Active' },
-    { id: 'SUBHEAD03', name: 'Vikram Singh', department: 'Academic Operations', sub_department: 'Faculty & Curriculum', designation: 'Faculty Lead', role: 'Head', status: 'Active' },
-    { id: 'TPC25109HR', name: 'Harshraj Singh', department: 'Academic Operations', sub_department: 'Faculty & Curriculum', designation: 'Senior Faculty Member', role: 'Employee', status: 'Active' },
-    { id: 'HEAD003', name: 'Neha Kapoor', department: 'Human Resources', sub_department: '', designation: 'Head of HR', role: 'Head', status: 'Active' },
-    { id: 'TPC25110DV', name: 'Devash Verma', department: 'Human Resources', sub_department: '', designation: 'Recruiter', role: 'Employee', status: 'Active' },
-    { id: 'HEAD004', name: 'Anil Agarwal', department: 'Finance & Accounts', sub_department: '', designation: 'Finance Chief', role: 'Head', status: 'Active' }
+    { id: 'TPC25107MR', name: 'Rohan Mehra', department: 'Sales & Marketing', sub_department: 'Direct Sales', other_department: '', designation: 'Senior Sales Executive', role: 'Employee', status: 'Active' },
+    { id: 'TPC25108AD', name: 'Neha Kapoor', department: 'Sales & Marketing', sub_department: 'Digital Marketing', other_department: '', designation: 'Campaign Specialist', role: 'Employee', status: 'Active' },
+    { id: 'TPC25109HR', name: 'Anil Kulkarni', department: 'Academic Operations', sub_department: 'Curriculum & Faculty', other_department: '', designation: 'Senior Academic Coordinator', role: 'Employee', status: 'Active' },
+    { id: 'TPC25110EX', name: 'Meera Iyer', department: 'Academic Operations', sub_department: 'Exam & Evaluations', other_department: '', designation: 'Evaluation Controller', role: 'Employee', status: 'Active' },
+    { id: 'HEAD001', name: 'Rajesh Sharma', department: 'Sales & Marketing', sub_department: '', other_department: '', designation: 'Head of Sales', role: 'Head', status: 'Active' },
+    { id: 'HEAD002', name: 'Dr. Sunita Gupta', department: 'Academic Operations', sub_department: '', other_department: '', designation: 'Academic Director', role: 'Head', status: 'Active' },
+    { id: 'ADMIN01', name: 'Central Admin', department: 'Executive Operations', sub_department: '', other_department: '', designation: 'System Administrator', role: 'Admin', status: 'Active' }
   ];
   for (const e of employees) {
     await run(
       `INSERT OR REPLACE INTO employees (id, name, department, sub_department, other_department, designation, role, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [e.id, e.name, e.department, e.sub_department, '', e.designation, e.role, e.status]
+      [e.id, e.name, e.department, e.sub_department, e.other_department, e.designation, e.role, e.status]
     );
   }
 
-  // 3. Fallback User Task Configs
+  // 3. Fallback User Task Configurations
   const salesConfig = [
-    { key: 'task_calls', label: 'Outbound Client Calls', type: 'number', target: 40, weight: 30, description: 'Outbound counseling calls.' },
-    { key: 'task_demos', label: 'Conduct Demo Sessions', type: 'number', target: 5, weight: 35, description: 'Live student counseling demos.' },
-    { key: 'task_followup', label: 'Follow up Open Inquiries', type: 'checkbox', weight: 15, description: 'CRM inquiry updates.' },
-    { key: 'task_list', label: 'Daily Key Priorities', type: 'dynamicList', weight: 20, description: 'Key priority action items.' }
+    { key: 'telecalling', label: 'Inbound / Outbound Calls', type: 'number', target: 40, weight: 35 },
+    { key: 'demos_scheduled', label: 'Product Demos Booked', type: 'number', target: 5, weight: 35 },
+    { key: 'crm_update', label: 'CRM Pipeline Clean & Updated', type: 'checkbox', target: 1, weight: 30 }
   ];
   const academicConfig = [
-    { key: 'task_lectures', label: 'Deliver Scheduled Lectures', type: 'number', target: 4, weight: 40, description: 'Interactive classroom teaching.' },
-    { key: 'task_evaluation', label: 'Evaluate Test Papers', type: 'number', target: 25, weight: 30, description: 'Grade student subjective papers.' },
-    { key: 'task_doubt_session', label: 'Hold Student Doubt Clearing', type: 'checkbox', weight: 15, description: '1-on-1 student doubt clearing.' },
-    { key: 'task_list', label: 'Curriculum & Paper Creation', type: 'dynamicList', weight: 15, description: 'Curriculum update deliverables.' }
+    { key: 'lectures_conducted', label: 'Lectures / Sessions Delivered', type: 'number', target: 4, weight: 40 },
+    { key: 'student_doubts', label: 'Student Doubt Clearance', type: 'number', target: 15, weight: 30 },
+    { key: 'curriculum_review', label: 'Weekly Curriculum Sync', type: 'checkbox', target: 1, weight: 30 }
   ];
   await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['TPC25107MR', JSON.stringify(salesConfig), nowIso]);
   await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['TPC25108AD', JSON.stringify(salesConfig), nowIso]);
   await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['TPC25109HR', JSON.stringify(academicConfig), nowIso]);
   await run(`INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`, ['HEAD001', JSON.stringify(salesConfig), nowIso]);
 
-  // 4. Fallback KRAs & SOPs
+  // 4. Fallback KRAs
   const kras = [
-    { id: 'KRA-SALES-01', timestamp: nowIso, position_name: 'Senior Sales Executive', text: 'Achieve monthly student enrollment targets and maintain high conversion rates.', type: 'Core Target' },
-    { id: 'KRA-SALES-02', timestamp: nowIso, position_name: 'Senior Sales Executive', text: 'Maintain CRM records and follow up with leads within 2 hours of inquiry.', type: 'Operational' },
-    { id: 'KRA-ACAD-01', timestamp: nowIso, position_name: 'Senior Faculty Member', text: 'Deliver high quality lectures aligned with curriculum syllabus schedule.', type: 'Academic' }
+    { id: 'KRA01', timestamp: nowIso, position_name: 'Senior Sales Executive', text: 'Achieve monthly lead conversion quotas and student enrollments.', type: 'Core' },
+    { id: 'KRA02', timestamp: nowIso, position_name: 'Senior Academic Coordinator', text: 'Ensure 100% syllabus coverage on schedule with top student satisfaction ratings.', type: 'Core' },
+    { id: 'KRA03', timestamp: nowIso, position_name: 'Head of Sales', text: 'Drive overall revenue target and team performance standards.', type: 'Leadership' }
   ];
   for (const k of kras) {
     await run(`INSERT OR REPLACE INTO kras (id, timestamp, position_name, text, type) VALUES (?, ?, ?, ?, ?)`, [k.id, k.timestamp, k.position_name, k.text, k.type]);
   }
 
+  // 5. Fallback SOPs
   const sops = [
     {
-      id: 'SOP-SALES-101',
+      id: 'SOP01',
       timestamp: nowIso,
       position_name: 'Senior Sales Executive',
-      kra_id: 'KRA-SALES-01',
-      text: 'Lead Calling & Counseling SOP: Call leads within 2 hours, introduce course offerings, evaluate student goals, and schedule demo.',
-      checklist: '1. Greet warmly\n2. Assess student background\n3. Pitch curriculum benefits\n4. Confirm demo booking date',
-      form_fields: 'Lead ID, Call Status, Demo Date, Lead Quality',
-      doc_link: 'https://drive.google.com/sample_sales_sop.pdf'
+      kra_id: 'KRA01',
+      text: 'Standard Operating Procedure for Inbound Lead Qualification and CRM Entry.',
+      checklist: JSON.stringify(['Answer lead within 5 mins', 'Identify student background & goal', 'Log notes in CRM', 'Schedule live demonstration']),
+      form_fields: JSON.stringify(['Student Name', 'Phone', 'Course of Interest', 'Trial Date']),
+      doc_link: 'https://docs.google.com/document/d/example-sop1'
     },
     {
-      id: 'SOP-ACAD-101',
+      id: 'SOP02',
       timestamp: nowIso,
-      position_name: 'Senior Faculty Member',
-      kra_id: 'KRA-ACAD-01',
-      text: 'Classroom Lecture Delivery SOP: Verify lab readiness, conduct interactive 60-min session, take attendance, and log discussion notes.',
-      checklist: '1. Check projector/board\n2. Mark attendance\n3. Deliver lecture with interactive Q&A\n4. Assign practice problems',
-      form_fields: 'Class ID, Subject, Topic Covered, Attendance Count',
-      doc_link: 'https://drive.google.com/sample_acad_sop.pdf'
+      position_name: 'Senior Academic Coordinator',
+      kra_id: 'KRA02',
+      text: 'Faculty Classroom Attendance, Syllabus Delivery & Milestone Verification.',
+      checklist: JSON.stringify(['Verify attendance sheet', 'Deliver prepared lesson plan', 'Assign homework practice', 'Address student questions']),
+      form_fields: JSON.stringify(['Batch Code', 'Topic Covered', 'Attendance Count']),
+      doc_link: 'https://docs.google.com/document/d/example-sop2'
     }
   ];
   for (const s of sops) {
     await run(`INSERT OR REPLACE INTO sops (id, timestamp, position_name, kra_id, text, checklist, form_fields, doc_link) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, [s.id, s.timestamp, s.position_name, s.kra_id, s.text, s.checklist, s.form_fields, s.doc_link]);
   }
 
-  // 5. Fallback Daily Report & Notifications
-  const sampleBod = { task_calls: { value: 40, type: 'number' }, task_demos: { value: 5, type: 'number' }, task_followup: { status: 'Pending', type: 'checkbox' } };
-  const sampleEod = { task_calls: { value: 38, type: 'number' }, task_demos: { value: 5, type: 'number' }, task_followup: { status: 'Done', type: 'checkbox' } };
+  // 6. Sample Daily Report
+  const sampleBod = { telecalling: { type: 'number', value: 40 }, demos_scheduled: { type: 'number', value: 5 }, crm_update: { type: 'checkbox', status: 'Pending' } };
+  const sampleEod = { telecalling: { type: 'number', value: 38 }, demos_scheduled: { type: 'number', value: 5 }, crm_update: { type: 'checkbox', status: 'Done' } };
   await run(
     `INSERT OR REPLACE INTO daily_reports (
       date, employee_id, department, bod_data, eod_data, system_score, last_updated,
-      head_rating, final_score, attendance, overtime, approval_status, expiry_timestamp
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [todayStr, 'TPC25107MR', 'Sales & Marketing', JSON.stringify(sampleBod), JSON.stringify(sampleEod), 98, nowIso, 100, 98, 'Present', 1.0, 'Approved', new Date(now.getTime() + 24 * 3600000).toISOString()]
+      head_rating, final_score, attendance, overtime, approval_status, approval_timestamp, rated_by, rated_on
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [todayStr, 'TPC25107MR', 'Sales & Marketing', JSON.stringify(sampleBod), JSON.stringify(sampleEod), 98, nowIso, 100, 98, 'Present', 0, 'Approved', nowIso, 'Rajesh Sharma (HEAD001)', nowIso]
   );
 
+  // 7. Sample Notification
   await run(
     `INSERT OR REPLACE INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, ?)`,
-    ['N_INIT_01', 'TPC25107MR', 'Welcome', 'Welcome to Daily Operations Hub. Please complete your morning BOD plan.', nowIso, 0]
+    ['N_INIT_001', 'TPC25107MR', 'Welcome', 'Welcome to the Daily Operations Hub! Your workspace is ready.', nowIso, 0]
   );
 
-  console.log('[DB] ✅ Local fallback seed completed successfully.');
+  console.log('[DB] ✅ Comprehensive fallback database seeded successfully.');
 }
