@@ -475,7 +475,7 @@ export default function BodEodFormModal({
       if (!state) return;
       const bodSaved = findTaskData(initialBodData, t) || {};
 
-      let target = Number(bodSaved.value) || t.target || 1;
+      let target = (bodSaved.value !== undefined && bodSaved.value !== null && bodSaved.value !== '') ? Number(bodSaved.value) : 0;
       let achieved = 0;
 
       if (t.inputType === 'dynamicList') {
@@ -495,17 +495,22 @@ export default function BodEodFormModal({
           });
         }
 
-        target = tSum || 1;
+        target = tSum;
         achieved = aSum;
       } else if (t.inputType === 'checkbox') {
-        achieved = state.status === 'Done' ? target : 0;
+        target = 1;
+        achieved = state.status === 'Done' ? 1 : 0;
       } else if (t.inputType === 'categoryNumber') {
+        target = (bodSaved.value !== undefined && bodSaved.value !== null && bodSaved.value !== '') ? Number(bodSaved.value) : 0;
         achieved = (state.subCatEntries || []).reduce((acc, row) => acc + (Number(row.val) || 0), 0);
       } else {
+        target = (bodSaved.value !== undefined && bodSaved.value !== null && bodSaved.value !== '') ? Number(bodSaved.value) : 0;
         achieved = Number(state.value) || 0;
       }
 
-      const p = target <= 0 ? 100 : (achieved / target) * 100;
+      // Exact 1:1 match with code.gs calculatePerformance:
+      // If target is 0 or unassigned, achieved >= 0 awards 100% (unassigned tasks do not penalize employee)
+      const p = target <= 0 ? (achieved >= 0 ? 100 : 0) : (achieved / target) * 100;
       scores.push(Math.min(100, Math.max(0, p)));
     });
 
