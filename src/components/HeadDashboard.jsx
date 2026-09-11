@@ -372,6 +372,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                   const reportKey = r.id || `${r.employee_id}_${r.date}`;
                   const input = ratingInputs[reportKey] || { rating: 100, attendance: 'Present', overtime: 0 };
                   const isLocked = r.approval_status === 'Approved' || r.approval_status === 'Auto Approved';
+                  const isEodSubmitted = Boolean(r.eod_data && r.eod_data.trim() !== '' && r.eod_data !== '{}');
 
                   return (
                     <tr key={reportKey}>
@@ -380,10 +381,32 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                         <strong>{r.employee_id}</strong>
                       </td>
                       <td>{r.department}</td>
-                      <td>{r.system_score}%</td>
+                      <td>
+                        {isEodSubmitted ? (
+                          `${r.system_score ?? 0}%`
+                        ) : (
+                          <span
+                            className="badge"
+                            style={{
+                              background: '#fef3c7',
+                              color: '#92400e',
+                              border: '1px solid #fde68a',
+                              fontSize: '0.74rem',
+                              padding: '3px 7px',
+                              borderRadius: '4px',
+                              fontWeight: 600
+                            }}
+                            title="BOD submitted. Waiting for evening EOD submission to compute score."
+                          >
+                            <i className="bi bi-hourglass-split me-1"></i>Pending EOD
+                          </span>
+                        )}
+                      </td>
                       <td>
                         {isLocked ? (
                           <span>{r.head_rating}%</span>
+                        ) : !isEodSubmitted ? (
+                          <span style={{ color: 'var(--ink-muted)', fontSize: '0.8rem' }} title="EOD must be submitted before rating">—</span>
                         ) : (
                           <input
                             type="number"
@@ -428,7 +451,13 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                         )}
                       </td>
                       <td style={{ fontWeight: 800, color: 'var(--primary)' }}>
-                        {r.final_score !== null && r.final_score !== undefined ? `${r.final_score}%` : 'Pending'}
+                        {!isEodSubmitted ? (
+                          <span style={{ color: 'var(--ink-muted)', fontWeight: 500, fontSize: '0.82rem' }}>Pending EOD</span>
+                        ) : r.final_score !== null && r.final_score !== undefined ? (
+                          `${r.final_score}%`
+                        ) : (
+                          'Pending'
+                        )}
                         {r.fine_amount > 0 && (
                           <div style={{ marginTop: '4px' }}>
                             <a
@@ -446,12 +475,22 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                       </td>
                       <td>
                         <div style={{ display: 'flex', gap: '6px' }}>
-                          {!isLocked && (
+                          {!isLocked && isEodSubmitted && (
                             <button className="btn btn-primary btn-sm" onClick={() => handleSaveRating(r)}>
                               Approve
                             </button>
                           )}
-                          <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail(r)}>
+                          {!isLocked && !isEodSubmitted && (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              disabled
+                              style={{ opacity: 0.65, cursor: 'not-allowed', fontSize: '0.76rem', padding: '4px 8px' }}
+                              title="Employee has submitted BOD. EOD report must be submitted before rating."
+                            >
+                              Awaiting EOD
+                            </button>
+                          )}
+                          <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail(r)} title="View Details">
                             <i className="bi bi-eye"></i>
                           </button>
                           <button

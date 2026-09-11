@@ -31,6 +31,7 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
   try { bodData = typeof currentReport.bod_data === 'string' ? JSON.parse(currentReport.bod_data) : currentReport.bod_data; } catch (e) {}
   try { eodData = typeof currentReport.eod_data === 'string' ? JSON.parse(currentReport.eod_data) : currentReport.eod_data; } catch (e) {}
 
+  const hasEod = Boolean(eodData && typeof eodData === 'object' && Object.keys(eodData).length > 0);
   const isHead = Boolean(user?.isHead || user?.role?.toLowerCase().includes('head') || user?.role?.toLowerCase().includes('admin'));
   const approvalStatus = currentReport.approval_status || currentReport.ratingStatus || 'Pending Review';
   const isLocked = approvalStatus === 'Approved' || approvalStatus === 'Auto Approved';
@@ -38,7 +39,7 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
 
   const sysScore = safeClientPercentage(currentReport.system_score ?? currentReport.sysScore);
   const headRatingVal = hasExistingRating ? safeClientPercentage(currentReport.head_rating) : null;
-  const finalScoreVal = !isLocked && approvalStatus === 'Pending Review' && !hasExistingRating ? null : safeClientPercentage(currentReport.final_score);
+  const finalScoreVal = !hasEod ? null : (!isLocked && approvalStatus === 'Pending Review' && !hasExistingRating ? null : safeClientPercentage(currentReport.final_score));
 
   const empId = currentReport.employee_id || currentReport.empId;
   const dateStr = currentReport.date;
@@ -116,28 +117,38 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
             <span>|</span>
             <span><strong>Department:</strong> {currentReport.department || 'General'}</span>
             <span>|</span>
-            <span><strong>System Completion:</strong> {sysScore}%</span>
+            <span>
+              <strong>System Completion:</strong>{' '}
+              {hasEod ? (
+                `${sysScore}%`
+              ) : (
+                <span
+                  className="badge"
+                  style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.74rem', padding: '2px 6px', fontWeight: 600 }}
+                >
+                  Pending EOD
+                </span>
+              )}
+            </span>
             {headRatingVal !== null && (
               <>
                 <span>|</span>
                 <span><strong>Head Rating:</strong> {headRatingVal}%</span>
               </>
             )}
-            {finalScoreVal !== null && (
-              <>
-                <span>|</span>
-                <span><strong>Final Score:</strong> {finalScoreVal}%</span>
-              </>
-            )}
+            <span>|</span>
+            <span><strong>Final Score:</strong> {hasEod && finalScoreVal !== null ? `${finalScoreVal}%` : 'Pending'}</span>
           </div>
 
           {/* 3 Score Cards with Progress Bars */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
             <div className="score-card">
               <div className="score-label">System %</div>
-              <div className="score-value">{sysScore}%</div>
+              <div className="score-value" style={{ fontSize: hasEod ? '1.5rem' : '1rem' }}>
+                {hasEod ? `${sysScore}%` : 'Pending EOD'}
+              </div>
               <div className="progress">
-                <div className="progress-bar bg-primary" style={{ width: `${Math.min(100, sysScore)}%` }}></div>
+                <div className="progress-bar bg-primary" style={{ width: `${hasEod ? Math.min(100, sysScore) : 0}%` }}></div>
               </div>
             </div>
 
@@ -151,9 +162,9 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
 
             <div className="score-card">
               <div className="score-label">Final %</div>
-              <div className="score-value">{finalScoreVal !== null ? `${finalScoreVal}%` : '-'}</div>
+              <div className="score-value">{hasEod && finalScoreVal !== null ? `${finalScoreVal}%` : '-'}</div>
               <div className="progress">
-                <div className="progress-bar bg-success" style={{ width: `${finalScoreVal !== null ? Math.min(100, finalScoreVal / 2) : 0}%` }}></div>
+                <div className="progress-bar bg-success" style={{ width: `${hasEod && finalScoreVal !== null ? Math.min(100, finalScoreVal / 2) : 0}%` }}></div>
               </div>
             </div>
           </div>
@@ -360,11 +371,16 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
             </h6>
 
             <div className="mb-2" style={{ fontSize: '0.85rem' }}>
-              <strong>System Computed Score:</strong> {sysScore}%
+              <strong>System Computed Score:</strong> {hasEod ? `${sysScore}%` : 'Pending (Awaiting EOD submission)'}
             </div>
 
             {/* Audit banner */}
-            {hasExistingRating ? (
+            {!hasEod ? (
+              <div className="alert alert-warning py-2 mb-3 small" style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e' }}>
+                <i className="bi bi-hourglass-split me-1"></i>
+                <strong>Awaiting EOD Submission:</strong> The employee has submitted morning BOD tasks, but the evening EOD report has not yet been submitted. Under standard operating rules, reports can only be scored and rated after EOD submission.
+              </div>
+            ) : hasExistingRating ? (
               <div className="alert alert-info py-2 mb-3 small">
                 <strong>Current Score:</strong> {finalScoreVal}%<br />
                 {currentReport.rating_last_updated && (
@@ -382,7 +398,7 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
             )}
 
             {/* If viewed by Head and report is not locked: interactive scrutiny controls */}
-            {isHead && !isLocked && (
+            {isHead && !isLocked && hasEod && (
               <div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '12px' }}>
                   <div>
