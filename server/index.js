@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initDatabase, query, run, get } from './db.js';
-import { syncDailyReportToSheets, syncFineToSheets } from './googleSheets.js';
+import { syncDailyReportToSheets, syncFineToSheets, syncUserConfigToSheets, syncDepartmentToSheets } from './googleSheets.js';
 import { startAutoSync, runTwoWaySync, getSyncStatus } from './syncEngine.js';
 import {
   calculatePerformance,
@@ -110,8 +110,8 @@ async function checkAutoApprovals() {
         const expiryDateStr = new Date(expiryTime).toISOString();
 
         await run(
-          `UPDATE daily_reports SET head_rating = ?, final_score = ?, approval_status = 'Auto Approved', approval_timestamp = ?, rated_by = 'System (Auto Approval)', rated_on = ? WHERE id = ?`,
-          [DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, r.id]
+          `UPDATE daily_reports SET head_rating = ?, final_score = ?, approval_status = 'Auto Approved', approval_timestamp = ?, rated_by = 'System (Auto Approval)', rated_on = ?, last_updated = ? WHERE id = ?`,
+          [DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, new Date().toISOString(), r.id]
         );
 
         const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
@@ -225,6 +225,10 @@ app.post('/api/structure/assign', async (req, res) => {
 
     const effectiveId = emp.emp_id || emp.id;
     await run(`UPDATE departments SET head_id = ?, head_name = ? WHERE name = ?`, [effectiveId, `${emp.name} (${effectiveId})`, subDeptName]);
+    // Push department head change to Google Sheets (fire-and-forget)
+    syncDepartmentToSheets({ name: subDeptName, head_id: effectiveId, head_name: `${emp.name} (${effectiveId})` }).catch(err => {
+      console.warn('[Sync Outbox] Department sync notice (ignored):', err.message);
+    });
     res.json({ success: true, message: `Assigned ${emp.name} as head of ${subDeptName}.` });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -243,6 +247,10 @@ app.post('/api/structure/remove', async (req, res) => {
     }
 
     await run(`UPDATE departments SET head_id = NULL, head_name = NULL WHERE name = ?`, [subDeptName]);
+    // Push department head removal to Google Sheets (fire-and-forget)
+    syncDepartmentToSheets({ name: subDeptName, head_id: '', head_name: '' }).catch(err => {
+      console.warn('[Sync Outbox] Department sync notice (ignored):', err.message);
+    });
     res.json({ success: true, message: `Removed head from ${subDeptName}.` });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -344,20 +352,22 @@ app.post('/api/employee/:id/report', async (req, res) => {
     let savedReport = null;
     if (!existing) {
       if (phase === 'BOD') {
-        const insertRes = await run(
+        await run(
           `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated) VALUES (?, ?, ?, ?, ?)`,
-          [todayStr, empId, emp.department, safePhaseJSON, now.toISOString()]
+          [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString()]
         );
-        savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [insertRes.lastID]);
       } else {
         const sysScore = calculatePerformance(null, phaseData);
         const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
-        const insertRes = await run(
+        await run(
           `INSERT INTO daily_reports (date, employee_id, department, eod_data, system_score, last_updated, approval_status, expiry_timestamp) VALUES (?, ?, ?, ?, ?, ?, 'Pending Review', ?)`,
-          [todayStr, empId, emp.department, safePhaseJSON, sysScore, now.toISOString(), expiryTime]
+          [todayStr, effectiveId, emp.department, safePhaseJSON, sysScore, now.toISOString(), expiryTime]
         );
-        savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [insertRes.lastID]);
       }
+      savedReport = await get(
+        `SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`,
+        [todayStr, emp.id, effectiveId]
+      );
     } else {
       if (existing.approval_status === 'Approved' || existing.approval_status === 'Auto Approved') {
         return res.status(400).json({ success: false, message: `This report is locked. It is already ${existing.approval_status.toLowerCase()}.` });
@@ -563,8 +573,8 @@ app.post('/api/head/rate', async (req, res) => {
     const nowIso = new Date().toISOString();
 
     await run(
-      `UPDATE daily_reports SET head_rating = ?, final_score = ?, attendance = ?, overtime = ?, rating_last_updated = ?, rating_edited_by = ?, approval_status = 'Approved', approval_timestamp = ?, rated_by = ?, rated_on = ? WHERE id = ?`,
-      [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, report.id]
+      `UPDATE daily_reports SET head_rating = ?, final_score = ?, attendance = ?, overtime = ?, rating_last_updated = ?, rating_edited_by = ?, approval_status = 'Approved', approval_timestamp = ?, rated_by = ?, rated_on = ?, last_updated = ? WHERE id = ?`,
+      [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, report.id]
     );
 
     const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
@@ -605,6 +615,10 @@ app.post('/api/config/:id', async (req, res) => {
       `INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`,
       [empId, JSON.stringify(configJson), nowIso]
     );
+    // Push config change to Google Sheets (fire-and-forget)
+    syncUserConfigToSheets({ employee_id: empId, config_json: JSON.stringify(configJson), last_updated: nowIso }).catch(err => {
+      console.warn('[Sync Outbox] Config sync notice (ignored):', err.message);
+    });
     res.json({ success: true, message: 'Tasks configuration saved successfully.' });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
@@ -665,8 +679,8 @@ app.post('/api/fines/issue', async (req, res) => {
     );
 
     await run(
-      `UPDATE daily_reports SET fine_amount = ?, fine_reason = ?, fine_doc_url = ?, fine_doc_name = ?, fine_issued_on = ?, fine_issued_by = ?, fine_status = 'Pending' WHERE date = ? AND employee_id = ?`,
-      [amount, reason, docUrl, docName, nowIso, issuerName, dateStr, empId]
+      `UPDATE daily_reports SET fine_amount = ?, fine_reason = ?, fine_doc_url = ?, fine_doc_name = ?, fine_issued_on = ?, fine_issued_by = ?, fine_status = 'Pending', last_updated = ? WHERE date = ? AND employee_id = ?`,
+      [amount, reason, docUrl, docName, nowIso, issuerName, nowIso, dateStr, empId]
     );
 
     const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
@@ -676,6 +690,8 @@ app.post('/api/fines/issue', async (req, res) => {
     );
 
     asyncSyncFine(fineObj);
+    const updatedDailyReport = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [dateStr, empId]);
+    if (updatedDailyReport) asyncSyncReport(updatedDailyReport);
 
     res.json({ success: true, fineId, docUrl, message: 'Fine issued successfully.' });
   } catch (err) {
@@ -696,8 +712,8 @@ app.post('/api/fines/status', async (req, res) => {
     );
 
     await run(
-      `UPDATE daily_reports SET fine_status = ?, employee_remarks = ? WHERE date = ? AND employee_id = ?`,
-      [status, employeeRemarks || '', fine.date, fine.employee_id]
+      `UPDATE daily_reports SET fine_status = ?, employee_remarks = ?, last_updated = ? WHERE date = ? AND employee_id = ?`,
+      [status, employeeRemarks || '', nowIso, fine.date, fine.employee_id]
     );
 
     // Notify issuing authority if disputed or acknowledged
@@ -709,6 +725,9 @@ app.post('/api/fines/status', async (req, res) => {
 
     const updatedFine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
     if (updatedFine) asyncSyncFine(updatedFine);
+
+    const updatedDailyReport = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [fine.date, fine.employee_id]);
+    if (updatedDailyReport) asyncSyncReport(updatedDailyReport);
 
     res.json({ success: true, message: 'Fine status updated successfully.' });
   } catch (err) {

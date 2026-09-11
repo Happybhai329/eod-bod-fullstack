@@ -13,8 +13,37 @@ const dbPath = path.join(__dirname, 'database.sqlite');
 let pgPool = null;
 let sqliteDb = null;
 
+// Auto-load .env file if DATABASE_URL is not present
+if (!process.env.DATABASE_URL) {
+  const envPaths = [
+    path.join(__dirname, '../.env'),
+    path.join(__dirname, '.env')
+  ];
+  for (const ep of envPaths) {
+    if (fs.existsSync(ep)) {
+      try {
+        const content = fs.readFileSync(ep, 'utf-8');
+        content.split(/\r?\n/).forEach(line => {
+          const m = line.match(/^\s*([\w_]+)\s*=\s*(?:["']?)(.*?)(?:["']?)\s*$/);
+          if (m && !process.env[m[1]]) {
+            process.env[m[1]] = m[2];
+          }
+        });
+      } catch (_) {}
+      break;
+    }
+  }
+}
+
+let isPostgresActive = null;
+
 export function getIsPostgres() {
+  if (isPostgresActive !== null) return isPostgresActive;
   return Boolean(process.env.DATABASE_URL);
+}
+
+export function setIsPostgresActive(val) {
+  isPostgresActive = val;
 }
 
 export function getPgPool() {
@@ -72,6 +101,12 @@ const CONFLICT_KEYS = {
   sops: ['id'],
   sync_logs: ['id']
 };
+
+// Note: For PostgreSQL, the syncEngine uses explicit ON CONFLICT clauses
+// that match the actual unique constraints in Supabase (e.g., ON CONFLICT (id)
+// for employees instead of ON CONFLICT ("employeeId")).
+// The CONFLICT_KEYS above are used by transformInsertOrReplace() for
+// automatic SQLite-to-PostgreSQL SQL translation only.
 
 export function transformInsertOrReplace(sql) {
   const match = sql.match(/INSERT\s+OR\s+REPLACE\s+INTO\s+([a-zA-Z0-9_]+)\s*\(([\s\S]*?)\)\s*VALUES\s*\(([\s\S]*?)\)/i);
@@ -147,6 +182,25 @@ export function get(sql, params = []) {
 }
 
 export async function initDatabase() {
+  if (process.env.DATABASE_URL) {
+    try {
+      const pool = getPgPool();
+      await pool.query('SELECT 1');
+      setIsPostgresActive(true);
+      console.log('[DB] ✅ PostgreSQL connection established successfully.');
+    } catch (pgErr) {
+      console.warn(`[DB] ⚠️ PostgreSQL connection failed: ${pgErr.message}`);
+      console.warn('[DB] 📁 Falling back to local SQLite database so application stays running.');
+      setIsPostgresActive(false);
+      if (pgPool) {
+        try { await pgPool.end(); } catch (_) {}
+        pgPool = null;
+      }
+    }
+  } else {
+    setIsPostgresActive(false);
+  }
+
   const isPostgres = getIsPostgres();
   if (!isPostgres) {
     await run(`PRAGMA foreign_keys = ON;`);
@@ -184,17 +238,134 @@ export async function initDatabase() {
       ALTER TABLE departments ADD COLUMN IF NOT EXISTS head_name TEXT;
       ALTER TABLE departments ADD COLUMN IF NOT EXISTS is_main INTEGER DEFAULT 1;
 
+      DO $$ BEGIN
+        ALTER TABLE departments ALTER COLUMN "departmentId" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE departments ALTER COLUMN "departmentName" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE departments ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE departments ALTER COLUMN "createdAt" SET DEFAULT NOW();
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE departments ALTER COLUMN "updatedAt" SET DEFAULT NOW();
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS emp_id TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS sub_department TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_department TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS designation TEXT;
 
-      UPDATE employees SET emp_id = COALESCE(emp_id, "employeeId", id) WHERE emp_id IS NULL;
-      UPDATE departments SET name = COALESCE(name, "departmentName") WHERE name IS NULL;
-      UPDATE departments SET head_id = COALESCE(head_id, "headId") WHERE head_id IS NULL;
-      UPDATE departments SET head_name = COALESCE(head_name, "headName") WHERE head_name IS NULL;
-      UPDATE employees SET sub_department = COALESCE(sub_department, "subDepartment") WHERE sub_department IS NULL;
-      UPDATE employees SET designation = COALESCE(designation, role) WHERE designation IS NULL;
+      DO $$ BEGIN
+        ALTER TABLE employees ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE employees ALTER COLUMN "employeeId" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE employees ALTER COLUMN "createdAt" SET DEFAULT NOW();
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE employees ALTER COLUMN "updatedAt" SET DEFAULT NOW();
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        UPDATE employees SET emp_id = COALESCE(emp_id, "employeeId", id) WHERE emp_id IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE employees SET "employeeId" = COALESCE("employeeId", emp_id, id) WHERE "employeeId" IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE departments SET name = COALESCE(name, "departmentName") WHERE name IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE departments SET "departmentName" = COALESCE("departmentName", name) WHERE "departmentName" IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE departments SET "departmentId" = COALESCE("departmentId", 'DEPT_' || name) WHERE "departmentId" IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE departments SET head_id = COALESCE(head_id, "headId") WHERE head_id IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE departments SET head_name = COALESCE(head_name, "headName") WHERE head_name IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE employees SET sub_department = COALESCE(sub_department, "subDepartment") WHERE sub_department IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        UPDATE employees SET designation = COALESCE(designation, role) WHERE designation IS NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_name ON departments(name);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_id ON employees(id);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        UPDATE daily_reports SET 
+          date = COALESCE(date, "reportDate"),
+          employee_id = COALESCE(employee_id, "employeeId"),
+          department = COALESCE(department, "departmentName"),
+          system_score = COALESCE(system_score, "systemScore"),
+          final_score = COALESCE(final_score, "finalScore"),
+          last_updated = COALESCE(last_updated, "lastUpdated"::text);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        UPDATE daily_reports SET 
+          "reportDate" = COALESCE("reportDate", date),
+          "employeeId" = COALESCE("employeeId", employee_id),
+          "departmentName" = COALESCE("departmentName", department),
+          "systemScore" = COALESCE("systemScore", system_score),
+          "finalScore" = COALESCE("finalScore", final_score);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "employeeId" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "reportDate" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "dateTimestamp" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "departmentName" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "systemScore" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "finalScore" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "lastUpdated" DROP NOT NULL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports DROP CONSTRAINT IF EXISTS "daily_reports_employeeId_fkey";
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports DROP CONSTRAINT IF EXISTS "daily_reports_employeeId_reportDate_key";
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "createdAt" SET DEFAULT NOW();
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "updatedAt" SET DEFAULT NOW();
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_emp ON daily_reports(date, employee_id);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
     `);
   } else {
     try {
