@@ -224,6 +224,7 @@ export default function App() {
         initialBodData={formBodData}
         initialEodData={formEodData}
         onSave={handleSaveReport}
+        user={user}
       />
 
       <TaskConfigModal
