@@ -615,3 +615,96 @@ button, input, select, textarea {
 .dyn-row { display: flex; flex-direction: column; width: 100%; }
 .subcat-row { display: flex; align-items: center; width: 100%; gap: 6px; }
 .alert-info { background-color: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; padding: 10px 14px; border-radius: 8px; }
+.alert-secondary { background-color: #f1f5f9; border: 1px solid #cbd5e1; color: #475569; padding: 10px 14px; border-radius: 8px; }
+.alert-warning { background-color: #fffbeb; border: 1px solid #fde68a; color: #92400e; padding: 10px 14px; border-radius: 8px; }
+
+/* Score Cards parity with index.html */
+.score-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  background: #fff;
+  text-align: center;
+}
+
+.score-card .score-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.score-card .score-value {
+  font-size: 1.4rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.progress {
+  height: 6px;
+  background-color: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.progress-bar {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+
+.bg-warning {
+  background-color: #f59e0b !important;
+  color: #ffffff !important;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.status-pending {
+  background-color: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+}
+
+.status-fine {
+  background-color: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.status-approved {
+  background-color: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
+
+.detail-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: 0.85rem;
+  color: var(--ink-muted);
+  padding: 10px 14px;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
+.detail-overview strong {
+  color: var(--ink);
+}
+
+.detail-task {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 8px;
+}
+

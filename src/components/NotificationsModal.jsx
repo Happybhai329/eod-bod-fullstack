@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
 
+/**
+ * Notifications Modal
+ * Matches 1:1 with notificationsModal in D:\prime\bod and eod\index.html lines 636-648
+ */
 export default function NotificationsModal({ isOpen, onClose, empId, onRefreshCount }) {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -16,7 +20,6 @@ export default function NotificationsModal({ isOpen, onClose, empId, onRefreshCo
       const data = await res.json();
       if (data.success) {
         setNotifications(data.notifications || []);
-        // Mark as read
         await fetch(`/api/notifications/${empId}/read`, { method: 'POST' });
         if (onRefreshCount) onRefreshCount();
       }
@@ -31,24 +34,23 @@ export default function NotificationsModal({ isOpen, onClose, empId, onRefreshCo
 
   return (
     <div className="modal-overlay">
-      <div className="modal-content">
-        <div className="modal-header">
-          <div>
-            <h3 style={{ fontSize: '1.15rem', fontWeight: 800 }}>🔔 Notifications</h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
-              Recent updates, approvals, and notices.
-            </p>
-          </div>
-          <button className="btn btn-secondary btn-sm" onClick={onClose}>
-            <i className="bi bi-x-lg"></i>
-          </button>
+      <div className="modal-content" style={{ maxWidth: '560px', width: '95%' }}>
+        {/* Modal Header matching index.html notificationsModal */}
+        <div className="modal-header bg-navy text-white" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px' }}>
+          <h5 className="modal-title" style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>
+            <i className="bi bi-bell me-2"></i>Notifications
+          </h5>
+          <button type="button" className="btn-close-white" onClick={onClose}>×</button>
         </div>
 
-        <div className="modal-body">
+        {/* Modal Body matching index.html */}
+        <div className="modal-body bg-light" style={{ maxHeight: '70vh', overflowY: 'auto', padding: '20px' }}>
           {loading ? (
-            <p>Loading notifications...</p>
+            <div className="text-center text-muted py-4">
+              <span className="spinner-border spinner-border-sm me-2 spin"></span> Loading...
+            </div>
           ) : notifications.length === 0 ? (
-            <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', textAlign: 'center', padding: '24px' }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--ink-muted)', textAlign: 'center', padding: '24px', margin: 0 }}>
               No notifications found.
             </p>
           ) : (
@@ -78,8 +80,11 @@ export default function NotificationsModal({ isOpen, onClose, empId, onRefreshCo
           )}
         </div>
 
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+        {/* Modal Footer */}
+        <div className="modal-footer" style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Close
+          </button>
         </div>
       </div>
     </div>

@@ -266,6 +266,14 @@ export default function App() {
         isOpen={isDetailOpen}
         onClose={() => setIsDetailOpen(false)}
         report={detailReport}
+        user={user}
+        onOpenFine={(empId, date) => {
+          setIsDetailOpen(false);
+          handleOpenFine(empId, date);
+        }}
+        onRateSuccess={() => {
+          showToast('Rating saved successfully!');
+        }}
       />
     </div>
   );

@@ -1,18 +1,24 @@
 import React, { useState, useEffect } from 'react';
 
+/**
+ * Assign / Change Sub-Department Head Modal
+ * Matches 1:1 with assignSubHeadModal in D:\prime\bod and eod\index.html lines 593-617
+ */
 export default function DepartmentStructureModal({ isOpen, onClose, user }) {
   const [departments, setDepartments] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(false);
   const [selectedSubDept, setSelectedSubDept] = useState('');
   const [selectedHeadId, setSelectedHeadId] = useState('');
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState({ text: '', type: '' });
+  const [saving, setSaving] = useState(false);
 
-  const isAdmin = user?.role?.toLowerCase().includes('admin') || user?.isAdmin;
+  const isAdmin = Boolean(user?.role?.toLowerCase().includes('admin') || user?.isAdmin || user?.isHead);
 
   useEffect(() => {
     if (!isOpen) return;
     fetchData();
+    setMsg({ text: '', type: '' });
   }, [isOpen]);
 
   const fetchData = async () => {
@@ -23,6 +29,9 @@ export default function DepartmentStructureModal({ isOpen, onClose, user }) {
       if (data.success) {
         setDepartments(data.departments || []);
         setEmployees(data.employees || []);
+        if (data.departments?.length > 0 && !selectedSubDept) {
+          setSelectedSubDept(data.departments[0].name);
+        }
       }
     } catch (err) {
       console.error(err);
@@ -33,12 +42,14 @@ export default function DepartmentStructureModal({ isOpen, onClose, user }) {
 
   const handleAssignHead = async (e) => {
     e.preventDefault();
-    if (!isAdmin) {
-      alert('Unauthorized: Only System Administrators can reassign department heads.');
+    if (!selectedSubDept || !selectedHeadId) {
+      setMsg({ text: 'Please select a sub-department and an employee.', type: 'danger' });
       return;
     }
-    if (!selectedSubDept || !selectedHeadId) return;
-    setMsg('');
+
+    setSaving(true);
+    setMsg({ text: '', type: '' });
+
     try {
       const res = await fetch('/api/structure/assign', {
         method: 'POST',
@@ -47,22 +58,21 @@ export default function DepartmentStructureModal({ isOpen, onClose, user }) {
       });
       const data = await res.json();
       if (data.success) {
-        setMsg(data.message);
+        setMsg({ text: data.message || 'Assigned sub-department head successfully!', type: 'success' });
+        setSelectedHeadId('');
         fetchData();
       } else {
-        alert(data.message || 'Failed to assign head.');
+        setMsg({ text: data.message || 'Failed to assign head.', type: 'danger' });
       }
     } catch (err) {
-      console.error(err);
+      setMsg({ text: 'Error connecting to server.', type: 'danger' });
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleRemoveHead = async (subDeptName) => {
-    if (!isAdmin) {
-      alert('Unauthorized: Only System Administrators can remove department heads.');
-      return;
-    }
-    if (!window.confirm(`Are you sure you want to remove the head of ${subDeptName}? Employees will fallback to Department Head.`)) return;
+    if (!window.confirm(`Are you sure you want to remove the head from ${subDeptName}?`)) return;
     try {
       const res = await fetch('/api/structure/remove', {
         method: 'POST',
@@ -71,10 +81,10 @@ export default function DepartmentStructureModal({ isOpen, onClose, user }) {
       });
       const data = await res.json();
       if (data.success) {
-        setMsg(data.message);
+        setMsg({ text: data.message || 'Removed head successfully.', type: 'success' });
         fetchData();
       } else {
-        alert(data.message || 'Failed to remove head.');
+        setMsg({ text: data.message || 'Failed to remove head.', type: 'danger' });
       }
     } catch (err) {
       console.error(err);
@@ -83,124 +93,164 @@ export default function DepartmentStructureModal({ isOpen, onClose, user }) {
 
   if (!isOpen) return null;
 
-  const subDepts = departments.filter(d => d.parent && d.parent !== '');
-
   return (
     <div className="modal-overlay">
-      <div className="modal-content" style={{ maxWidth: '750px' }}>
-        <div className="modal-header">
-          <div>
-            <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
-              🌿 {isAdmin ? 'Department Structure Administration' : 'Department Organizational Directory'}
-            </h3>
-            <p style={{ fontSize: '0.8rem', color: 'var(--ink-muted)' }}>
-              {isAdmin ? 'System Administrator control for assigning and managing Sub-Department Heads.' : 'Overview of current organizational structure and designated heads.'}
-            </p>
-          </div>
-          <button className="btn btn-secondary btn-sm" onClick={onClose}>
-            <i className="bi bi-x-lg"></i>
-          </button>
+      <div className="modal-content" style={{ maxWidth: '750px', width: '95%' }}>
+        {/* Modal Header matching index.html assignSubHeadModal */}
+        <div className="modal-header bg-navy text-white" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px' }}>
+          <h5 className="modal-title" style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>
+            <i className="bi bi-diagram-3 me-2"></i>Assign Sub-Department Head
+          </h5>
+          <button type="button" className="btn-close-white" onClick={onClose}>×</button>
         </div>
 
-        <div className="modal-body">
-          {msg && (
-            <div style={{ padding: '10px 14px', background: 'var(--success-light)', color: 'var(--success)', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem', fontWeight: 600 }}>
-              {msg}
+        {/* Modal Body matching index.html */}
+        <div className="modal-body bg-light" style={{ maxHeight: '78vh', overflowY: 'auto', padding: '20px' }}>
+          {msg.text && (
+            <div className={`alert ${msg.type === 'success' ? 'alert-info' : 'alert-warning'} py-2 mb-3 small fw-bold`}>
+              {msg.text}
             </div>
           )}
 
-          {loading ? (
-            <p>Loading hierarchy data...</p>
-          ) : (
-            <div>
-              <div style={{ marginBottom: '24px' }}>
-                <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '12px' }}>Sub-Departments & Current Heads</h4>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {subDepts.map((sd) => (
-                    <div
-                      key={sd.name}
-                      style={{
-                        padding: '12px 16px',
-                        borderRadius: '8px',
-                        border: '1px solid var(--line)',
-                        background: 'var(--surface-raised)',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <div>
-                        <strong style={{ fontSize: '0.9rem', color: 'var(--ink)' }}>{sd.name}</strong>
-                        <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)', marginLeft: '8px' }}>
-                          (Parent: {sd.parent})
-                        </span>
-                        <div style={{ fontSize: '0.8rem', color: 'var(--primary)', marginTop: '2px', fontWeight: 600 }}>
-                          Current Head: {sd.head_name || sd.headName || 'None (Managed by Dept Head)'}
-                        </div>
-                      </div>
-                      {isAdmin && sd.head_id && (
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          style={{ color: 'var(--danger)' }}
-                          onClick={() => handleRemoveHead(sd.name)}
-                        >
-                          Remove Head
-                        </button>
-                      )}
-                    </div>
+          {/* Sub-department selection & assignment form */}
+          <form onSubmit={handleAssignHead} className="card p-3 mb-4 border" style={{ borderColor: '#e2e8f0' }}>
+            <h6 className="fw-bold mb-3" style={{ fontSize: '0.9rem', color: '#13233f' }}>
+              Assign or Change Head
+            </h6>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginBottom: '12px' }}>
+              <div>
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem', marginBottom: '4px', display: 'block' }}>
+                  Sub-department
+                </label>
+                <select
+                  className="form-select"
+                  value={selectedSubDept}
+                  onChange={(e) => setSelectedSubDept(e.target.value)}
+                >
+                  {departments.map((d) => (
+                    <option key={d.name} value={d.name}>
+                      {d.name} {d.is_main ? '(Main Dept)' : ''}
+                    </option>
                   ))}
-                </div>
+                </select>
               </div>
 
-              {isAdmin && (
-                <div style={{ borderTop: '1px solid var(--line)', paddingTop: '20px' }}>
-                  <h4 style={{ fontSize: '0.95rem', fontWeight: 700, marginBottom: '12px' }}>
-                    <i className="bi bi-shield-lock me-1"></i> Admin: Assign / Reassign Sub-Department Head
-                  </h4>
-                  <form onSubmit={handleAssignHead} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '12px', alignItems: 'end' }}>
-                    <div>
-                      <label className="form-label">Sub-Department</label>
-                      <select
-                        className="form-select"
-                        value={selectedSubDept}
-                        onChange={(e) => setSelectedSubDept(e.target.value)}
-                      >
-                        <option value="">Select Sub-Department...</option>
-                        {subDepts.map(sd => (
-                          <option key={sd.name} value={sd.name}>{sd.name}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="form-label">Assign Employee as Head</label>
-                      <select
-                        className="form-select"
-                        value={selectedHeadId}
-                        onChange={(e) => setSelectedHeadId(e.target.value)}
-                      >
-                        <option value="">Select Employee...</option>
-                        {employees.map(emp => (
-                          <option key={emp.id} value={emp.id}>{emp.name} ({emp.id}) - {emp.department}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <button type="submit" className="btn btn-primary">
-                      Assign Head
-                    </button>
-                  </form>
-                </div>
-              )}
+              <div>
+                <label className="form-label fw-bold" style={{ fontSize: '0.8rem', marginBottom: '4px', display: 'block' }}>
+                  Select Employee (Active)
+                </label>
+                <select
+                  className="form-select"
+                  value={selectedHeadId}
+                  onChange={(e) => setSelectedHeadId(e.target.value)}
+                >
+                  <option value="">-- Choose Employee --</option>
+                  {employees
+                    .filter(e => e.status?.toLowerCase() === 'active')
+                    .map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.name} ({e.id}) - {e.department || e.role}
+                      </option>
+                    ))}
+                </select>
+              </div>
             </div>
-          )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <button
+                type="submit"
+                className="btn btn-primary fw-bold"
+                disabled={saving || !selectedHeadId}
+                style={{ fontSize: '0.85rem' }}
+              >
+                {saving ? (
+                  <>
+                    <span className="spinner-border spinner-border-sm me-2 spin"></span>
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <i className="bi bi-check-lg me-1"></i> Assign / Change
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+
+          {/* Current Department Structure Table */}
+          <h6 className="fw-bold mb-2" style={{ fontSize: '0.9rem', color: '#13233f' }}>
+            Current Department Heads & Hierarchy
+          </h6>
+
+          <div className="table-shell">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Department / Sub-dept</th>
+                  <th>Parent Dept</th>
+                  <th>Current Head</th>
+                  <th style={{ textAlign: 'right' }}>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan="4" className="text-center py-4 text-muted">
+                      <span className="spinner-border spinner-border-sm me-2 spin"></span> Loading hierarchy...
+                    </td>
+                  </tr>
+                ) : departments.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-center py-4 text-muted">
+                      No departments configured.
+                    </td>
+                  </tr>
+                ) : (
+                  departments.map((d) => (
+                    <tr key={d.name}>
+                      <td>
+                        <strong>{d.name}</strong>
+                        {d.is_main ? <span className="badge bg-primary ms-2" style={{ fontSize: '0.68rem' }}>Main</span> : ''}
+                      </td>
+                      <td>{d.parent || '-'}</td>
+                      <td>
+                        {d.head_name ? (
+                          <span className="text-success fw-bold">
+                            <i className="bi bi-person-check me-1"></i>
+                            {d.head_name}
+                          </span>
+                        ) : (
+                          <span className="text-muted">Unassigned</span>
+                        )}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>
+                        {d.head_id && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => handleRemoveHead(d.name)}
+                            title="Remove head"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
-        <div className="modal-footer">
-          <button className="btn btn-secondary" onClick={onClose}>Close</button>
+        {/* Modal Footer matching index.html */}
+        <div className="modal-footer" style={{ padding: '12px 20px', borderTop: '1px solid #e2e8f0', display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Close
+          </button>
         </div>
       </div>
     </div>
   );
 }
-
