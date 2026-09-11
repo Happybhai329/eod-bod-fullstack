@@ -6,6 +6,16 @@ function safeClientPercentage(val) {
   return isNaN(num) ? 0 : Math.round(num);
 }
 
+function sanitizeEditorDisplayName(nameOrId) {
+  if (!nameOrId) return '';
+  // Strip any ID enclosed in parentheses, e.g. "SANKET BHARTI (TPC2423SB)" -> "SANKET BHARTI"
+  const clean = String(nameOrId).replace(/\s*\([^)]*\)/g, '').trim();
+  if (!clean || (/^[A-Z0-9_-]+$/i.test(clean) && !clean.includes(' '))) {
+    return 'Department Head';
+  }
+  return clean;
+}
+
 export default function ReportDetailModal({ isOpen, onClose, report, user, onOpenFine, onRateSuccess }) {
   const [currentReport, setCurrentReport] = useState(report);
   const [attendance, setAttendance] = useState('Present');
@@ -387,7 +397,11 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
                   <><strong>Last Updated:</strong> {currentReport.rating_last_updated}<br /></>
                 )}
                 {currentReport.rating_edited_by && (
-                  <><strong>Edited By:</strong> {currentReport.rating_edited_by}</>
+                  isHead ? (
+                    <><strong>Edited By:</strong> {currentReport.rating_edited_by}</>
+                  ) : (
+                    <><strong>Reviewed By:</strong> {sanitizeEditorDisplayName(currentReport.rating_edited_by)}</>
+                  )
                 )}
               </div>
             ) : (

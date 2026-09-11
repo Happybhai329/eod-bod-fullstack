@@ -430,13 +430,42 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
 
     const average = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
 
+    // Security: Sanitize Head ID from employee-facing payloads so employees never see manager IDs
+    const sanitizeForEmployee = (text) => {
+      if (!text) return text;
+      const clean = String(text).replace(/\s*\([^)]*\)/g, '').trim();
+      if (!clean || (/^[A-Z0-9_-]+$/i.test(clean) && !clean.includes(' '))) {
+        return 'Department Head';
+      }
+      return clean;
+    };
+
+    const sanitizedReports = allReports.map(r => ({
+      ...r,
+      rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
+      rated_by: sanitizeForEmployee(r.rated_by),
+      fine_issued_by: sanitizeForEmployee(r.fine_issued_by)
+    }));
+
+    const sanitizedFilteredReports = filteredReports.map(r => ({
+      ...r,
+      rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
+      rated_by: sanitizeForEmployee(r.rated_by),
+      fine_issued_by: sanitizeForEmployee(r.fine_issued_by)
+    }));
+
+    const sanitizedFines = fines.map(f => ({
+      ...f,
+      issued_by: sanitizeForEmployee(f.issued_by)
+    }));
+
     res.json({
       success: true,
       data: {
         average,
-        reports: allReports,
-        filteredReports,
-        fines
+        reports: sanitizedReports,
+        filteredReports: sanitizedFilteredReports,
+        fines: sanitizedFines
       }
     });
   } catch (err) {
@@ -577,10 +606,11 @@ app.post('/api/head/rate', async (req, res) => {
       [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, report.id]
     );
 
+    const reviewerDisplayName = headUser ? headUser.name : 'Department Head';
     const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
     await run(
       `INSERT INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, 0)`,
-      [notifId, empId, 'Report Approved', `Your report for ${dateStr} was approved by ${raterName} with a rating of ${numRating}% (Final Score: ${finalScore}%).`, nowIso]
+      [notifId, empId, 'Report Approved', `Your report for ${dateStr} was approved by ${reviewerDisplayName} with a rating of ${numRating}% (Final Score: ${finalScore}%).`, nowIso]
     );
 
     const updated = await get(`SELECT * FROM daily_reports WHERE id = ?`, [report.id]);
