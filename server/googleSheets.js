@@ -577,6 +577,8 @@ export async function syncDailyReportToSheets(report) {
       return existingRow[existingColIdx];
     }
     return fallback;
+  };
+
   // Force date to be treated as plain text string literal by prefixing with '
   // This prevents Google Sheets from converting DD/MM/YYYY into an Excel serial number like 46277
   const formattedDate = targetDate.startsWith("'") ? targetDate : `'${targetDate}`;
