@@ -64,6 +64,23 @@ export function normalizeDateToDDMMYYYY(dateVal) {
   return s;
 }
 
+/**
+ * Format timestamp to DD/MM/YYYY HH:mm:ss in Asia/Kolkata timezone (matching code.gs)
+ */
+export function formatIndianDateTime(d = new Date()) {
+  if (!d) return '';
+  const date = d instanceof Date ? d : new Date(d);
+  if (isNaN(date.getTime())) return String(d);
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const get = (type) => parts.find(p => p.type === type)?.value || '';
+  return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
+}
+
 // Spreadsheet IDs — read from .env, fallback to hardcoded values from code.gs
 const MASTER_DB_ID = process.env.MASTER_DB_SPREADSHEET_ID || '1AxdiOpaij8Lnx0TV5iMhgVlADfN0LeXzwOdmbzmrlGA';
 const APP_DB_ID = process.env.APP_DB_SPREADSHEET_ID || '1IFGc0kvv9LpbZUfEGroY8PevevJ8axdPApVrLjidlw8';
@@ -560,32 +577,35 @@ export async function syncDailyReportToSheets(report) {
       return existingRow[existingColIdx];
     }
     return fallback;
-  };
+  // Force date to be treated as plain text string literal by prefixing with '
+  // This prevents Google Sheets from converting DD/MM/YYYY into an Excel serial number like 46277
+  const formattedDate = targetDate.startsWith("'") ? targetDate : `'${targetDate}`;
+  const formattedLastUpdated = formatIndianDateTime(report.last_updated || new Date());
 
   const rowValues = [
-    targetDate,                                                     // 0: Date
+    formattedDate,                                                  // 0: Date
     report.employee_id,                                             // 1: EmployeeID
     mergeVal(report.department, 2),                                 // 2: Department
     mergeVal(report.bod_data, 3),                                   // 3: BOD_Data
     mergeVal(report.eod_data, 4),                                   // 4: EOD_Data
     mergeVal(report.system_score, 5),                               // 5: System_Score_%
-    mergeVal(report.last_updated, 6, new Date().toISOString()),     // 6: Last_Updated
+    mergeVal(formattedLastUpdated, 6, formatIndianDateTime()),      // 6: Last_Updated
     mergeVal(report.head_rating, 7),                                // 7: Head_Rating
     mergeVal(report.final_score, 8),                                // 8: Final_Score_%
     mergeVal(report.attendance, 9, 'Present'),                      // 9: Attendance
     mergeVal(report.overtime, 10, 0),                               // 10: Overtime
-    mergeVal(report.rating_last_updated, 11),                       // 11: Rating_Last_Updated
+    mergeVal(report.rating_last_updated ? formatIndianDateTime(report.rating_last_updated) : '', 11), // 11: Rating_Last_Updated
     mergeVal(report.rating_edited_by, 12),                          // 12: Rating_Edited_By
     mergeVal(report.approval_status, 13, 'Pending Review'),         // 13: Approval_Status
-    mergeVal(report.approval_timestamp, 14),                        // 14: Approval_Timestamp
-    mergeVal(report.expiry_timestamp, 15),                          // 15: Expiry_Timestamp
+    mergeVal(report.approval_timestamp ? formatIndianDateTime(report.approval_timestamp) : '', 14),   // 14: Approval_Timestamp
+    mergeVal(report.expiry_timestamp ? formatIndianDateTime(report.expiry_timestamp) : '', 15),       // 15: Expiry_Timestamp
     mergeVal(report.rated_by, 16),                                  // 16: Rated_By
-    mergeVal(report.rated_on, 17),                                  // 17: Rated_On
+    mergeVal(report.rated_on ? formatIndianDateTime(report.rated_on) : '', 17),                         // 17: Rated_On
     mergeVal(report.fine_amount, 18),                               // 18: Fine_Amount
     mergeVal(report.fine_reason, 19),                               // 19: Fine_Reason
     mergeVal(report.fine_doc_url, 20),                              // 20: Fine_Document_URL
     mergeVal(report.fine_doc_name, 21),                             // 21: Fine_Document_Name
-    mergeVal(report.fine_issued_on, 22),                            // 22: Fine_Issued_On
+    mergeVal(report.fine_issued_on ? formatIndianDateTime(report.fine_issued_on) : '', 22),           // 22: Fine_Issued_On
     mergeVal(report.fine_issued_by, 23),                            // 23: Fine_Issued_By
     mergeVal(report.fine_status, 24),                               // 24: Fine_Status
     mergeVal(report.employee_remarks, 25)                           // 25: Employee_Remarks

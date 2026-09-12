@@ -17,6 +17,7 @@ import {
   appendRow,
   appendRows,
   normalizeDateToDDMMYYYY,
+  formatIndianDateTime,
   MASTER_DB_ID,
   APP_DB_ID,
   fetchRealEmployees,
@@ -375,30 +376,35 @@ export async function syncOutbound() {
         return fallback;
       };
 
+      // Force date to be treated as plain text string literal by prefixing with '
+      // This prevents Google Sheets from converting DD/MM/YYYY into an Excel serial number like 46277
+      const formattedDate = normDate.startsWith("'") ? normDate : `'${normDate}`;
+      const formattedLastUpdated = formatIndianDateTime(r.last_updated || new Date());
+
       const rowValues = [
-        normDate,
+        formattedDate,
         r.employee_id,
         mergeOutboundVal(r.department, 2),
         mergeOutboundVal(r.bod_data, 3),
         mergeOutboundVal(r.eod_data, 4),
         mergeOutboundVal(r.system_score, 5),
-        mergeOutboundVal(r.last_updated, 6, new Date().toISOString()),
+        mergeOutboundVal(formattedLastUpdated, 6, formatIndianDateTime()),
         mergeOutboundVal(r.head_rating, 7),
         mergeOutboundVal(r.final_score, 8),
         mergeOutboundVal(r.attendance, 9, 'Present'),
         mergeOutboundVal(r.overtime, 10, 0),
-        mergeOutboundVal(r.rating_last_updated, 11),
+        mergeOutboundVal(r.rating_last_updated ? formatIndianDateTime(r.rating_last_updated) : '', 11),
         mergeOutboundVal(r.rating_edited_by, 12),
         mergeOutboundVal(r.approval_status, 13, 'Pending Review'),
-        mergeOutboundVal(r.approval_timestamp, 14),
-        mergeOutboundVal(r.expiry_timestamp, 15),
+        mergeOutboundVal(r.approval_timestamp ? formatIndianDateTime(r.approval_timestamp) : '', 14),
+        mergeOutboundVal(r.expiry_timestamp ? formatIndianDateTime(r.expiry_timestamp) : '', 15),
         mergeOutboundVal(r.rated_by, 16),
-        mergeOutboundVal(r.rated_on, 17),
+        mergeOutboundVal(r.rated_on ? formatIndianDateTime(r.rated_on) : '', 17),
         mergeOutboundVal(r.fine_amount, 18),
         mergeOutboundVal(r.fine_reason, 19),
         mergeOutboundVal(r.fine_doc_url, 20),
         mergeOutboundVal(r.fine_doc_name, 21),
-        mergeOutboundVal(r.fine_issued_on, 22),
+        mergeOutboundVal(r.fine_issued_on ? formatIndianDateTime(r.fine_issued_on) : '', 22),
         mergeOutboundVal(r.fine_issued_by, 23),
         mergeOutboundVal(r.fine_status, 24),
         mergeOutboundVal(r.employee_remarks, 25)
