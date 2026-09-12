@@ -56,9 +56,16 @@ export function calculatePerformance(bodObj, eodObj) {
 
         taskList.forEach(item => {
           if (!item || typeof item !== 'object') return;
-          const hasNumberTarget = item.hasTarget === true || item.hasTarget === 'true' || item.hasTarget === undefined;
+          const hasNumberTarget = (item.hasTarget === true || item.hasTarget === 'true') && item.target !== '' && item.target !== undefined && item.target !== null;
           const itemTarget = hasNumberTarget ? getSafeNonNegativeNumber(item.target, 1) : 1;
-          const itemAchieved = hasNumberTarget ? getSafeNonNegativeNumber(item.achieved, 0) : (item.status === 'Done' ? 1 : 0);
+
+          let itemAchieved = 0;
+          if (hasNumberTarget) {
+            const numAchieved = getSafeNonNegativeNumber(item.achieved, 0);
+            itemAchieved = (numAchieved > 0) ? numAchieved : (item.status === 'Done' ? itemTarget : 0);
+          } else {
+            itemAchieved = (item.status === 'Done' || item.achieved === 'Done' || item.achieved === '1') ? 1 : 0;
+          }
 
           if (item.isVoluntary) {
             achievedSum += itemAchieved;
@@ -70,7 +77,7 @@ export function calculatePerformance(bodObj, eodObj) {
         target = targetSum;
         achieved = achievedSum;
       } else if (eTask.type === 'checkbox') {
-        achieved = eTask.status === 'Done' ? target : 0;
+        achieved = (eTask.status === 'Done' || eTask.value === '1' || eTask.value === 1 || String(eTask.value).toLowerCase() === 'yes') ? target : 0;
       } else if (eTask.type === 'number') {
         achieved = getSafeNonNegativeNumber(eTask.value, 0);
       } else if (eTask.type === 'categoryNumber') {

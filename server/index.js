@@ -290,11 +290,19 @@ app.get('/api/employee/:id/form', async (req, res) => {
     if (todayReport) {
       if (todayReport.bod_data) {
         todayStatus.bodFilled = true;
-        try { bodDataObj = JSON.parse(todayReport.bod_data); } catch (e) {}
+        if (typeof todayReport.bod_data === 'object') {
+          bodDataObj = todayReport.bod_data;
+        } else {
+          try { bodDataObj = JSON.parse(todayReport.bod_data); } catch (e) {}
+        }
       }
       if (todayReport.eod_data) {
         todayStatus.eodFilled = true;
-        try { eodDataObj = JSON.parse(todayReport.eod_data); } catch (e) {}
+        if (typeof todayReport.eod_data === 'object') {
+          eodDataObj = todayReport.eod_data;
+        } else {
+          try { eodDataObj = JSON.parse(todayReport.eod_data); } catch (e) {}
+        }
       }
 
       if (todayReport.last_updated && todayReport.approval_status !== 'Approved' && todayReport.approval_status !== 'Auto Approved') {
@@ -358,10 +366,11 @@ app.post('/api/employee/:id/report', async (req, res) => {
         );
       } else {
         const sysScore = calculatePerformance(null, phaseData);
+        const finalScore = sysScore;
         const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
         await run(
-          `INSERT INTO daily_reports (date, employee_id, department, eod_data, system_score, last_updated, approval_status, expiry_timestamp) VALUES (?, ?, ?, ?, ?, ?, 'Pending Review', ?)`,
-          [todayStr, effectiveId, emp.department, safePhaseJSON, sysScore, now.toISOString(), expiryTime]
+          `INSERT INTO daily_reports (date, employee_id, department, eod_data, system_score, final_score, last_updated, approval_status, expiry_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending Review', ?)`,
+          [todayStr, effectiveId, emp.department, safePhaseJSON, sysScore, finalScore, now.toISOString(), expiryTime]
         );
       }
       savedReport = await get(
@@ -382,11 +391,15 @@ app.post('/api/employee/:id/report', async (req, res) => {
       } else {
         let bodObj = null;
         if (existing.bod_data) {
-          try { bodObj = JSON.parse(existing.bod_data); } catch (e) {}
+          if (typeof existing.bod_data === 'object') {
+            bodObj = existing.bod_data;
+          } else {
+            try { bodObj = JSON.parse(existing.bod_data); } catch (e) {}
+          }
         }
         const sysScore = calculatePerformance(bodObj, phaseData);
-        let finalScore = existing.final_score;
-        if (existing.head_rating !== null && existing.head_rating !== undefined) {
+        let finalScore = sysScore;
+        if (existing.head_rating !== null && existing.head_rating !== undefined && existing.head_rating !== '' && existing.head_rating !== 'Auto') {
           finalScore = calculateFinalScore(sysScore, existing.head_rating);
         }
 
