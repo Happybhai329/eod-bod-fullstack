@@ -732,6 +732,270 @@ export async function syncUserConfigToSheets(config) {
   }
 }
 
+/**
+ * Assigned Tasks helpers & APIs
+ */
+function computeAssignedTaskProgress(taskId, subRows, itemRows) {
+  const subs = (subRows || []).slice(1).filter(r => String(r[1] || '').trim() === taskId);
+  if (subs.length === 0) return 0;
+  let sum = 0;
+  subs.forEach(s => {
+    const sid = String(s[0] || '').trim();
+    const items = (itemRows || []).slice(1).filter(r => String(r[2] || '').trim() === sid);
+    let p;
+    if (items.length === 0) {
+      p = (String(s[4] || '').trim().toLowerCase() === 'done') ? 100 : 0;
+    } else {
+      const doneCount = items.filter(r => String(r[4] || '').trim().toUpperCase() === 'TRUE').length;
+      p = Math.round(doneCount * 100 / items.length);
+    }
+    sum += p;
+  });
+  return Math.round(sum / subs.length);
+}
+
+export async function fetchAssignedTasks(empId) {
+  try {
+    const cleanEmp = String(empId || '').trim().toUpperCase();
+    if (!cleanEmp) return { success: false, message: 'Employee ID missing.', data: { active: [], completed: [], taskScore: 0 } };
+
+    const [mainData, subRows, itemRows] = await Promise.all([
+      readSheet(APP_DB_ID, 'Tasks_Main').catch(() => []),
+      readSheet(APP_DB_ID, 'Tasks_Sub').catch(() => []),
+      readSheet(APP_DB_ID, 'Tasks_Checklist').catch(() => [])
+    ]);
+
+    const active = [];
+    const completed = [];
+    const now = new Date();
+    const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+    for (let i = 1; i < (mainData || []).length; i++) {
+      const row = mainData[i];
+      if (!row[0]) continue;
+      const assignTo = String(row[3] || '').trim().toUpperCase();
+      if (assignTo !== cleanEmp) continue;
+
+      const status = row[9] ? String(row[9]).trim() : 'Open';
+      const deadline = row[8] ? String(row[8]).trim() : '';
+      const deadlineMs = deadline ? new Date(deadline.replace('T', ' ')).getTime() : 0;
+      const daysLeft = deadlineMs ? Math.ceil((deadlineMs - now.getTime()) / 86400000) : null;
+      const createdAt = row[11] ? String(row[11]).trim() : '';
+      const createdDate = createdAt ? new Date(createdAt) : null;
+
+      const rec = {
+        taskId: String(row[0]).trim(),
+        taskName: row[1] ? String(row[1]) : '(Untitled task)',
+        instructions: row[2] ? String(row[2]) : '',
+        deadline: deadline,
+        priority: row[7] ? String(row[7]).trim() : 'Medium',
+        status: status,
+        progress: parseInt(row[10] || 0, 10) || 0,
+        createdAt: createdAt,
+        completedAt: row[12] ? String(row[12]) : '',
+        daysLeft: daysLeft,
+        overdue: deadlineMs > 0 && deadlineMs < now.getTime() && status !== 'Completed' && status !== 'Cancelled',
+        completedLate: false,
+        subTasks: []
+      };
+
+      if (status === 'Completed') {
+        const cAt = new Date(rec.completedAt);
+        if (deadlineMs > 0 && !isNaN(cAt.getTime()) && cAt.getTime() > deadlineMs) {
+          rec.completedLate = true;
+        }
+        completed.push(rec);
+        continue;
+      }
+
+      if (status === 'Cancelled') continue;
+
+      if (createdDate && !isNaN(createdDate.getTime())) {
+        const createdMid = new Date(createdDate.getFullYear(), createdDate.getMonth(), createdDate.getDate()).getTime();
+        if (createdMid > todayMid) continue;
+      }
+
+      (subRows || []).slice(1).forEach(s => {
+        if (String(s[1] || '').trim() !== rec.taskId) return;
+        const sid = String(s[0] || '').trim();
+        const items = (itemRows || []).slice(1)
+          .filter(r => String(r[2] || '').trim() === sid)
+          .map(r => ({
+            itemId: String(r[0] || '').trim(),
+            text: r[3] ? String(r[3]) : '',
+            done: String(r[4] || '').trim().toUpperCase() === 'TRUE'
+          }));
+        const doneCount = items.filter(it => it.done).length;
+        const subProg = items.length
+          ? Math.round(doneCount * 100 / items.length)
+          : (String(s[4] || '').trim().toLowerCase() === 'done' ? 100 : 0);
+        rec.subTasks.push({
+          sid: sid,
+          name: s[2] ? String(s[2]) : '',
+          status: s[4] ? String(s[4]).trim() : 'Open',
+          progress: subProg,
+          items: items
+        });
+      });
+
+      rec.progress = computeAssignedTaskProgress(rec.taskId, subRows, itemRows);
+      active.push(rec);
+    }
+
+    let taskScore = 0;
+    if (active.length > 0) {
+      const sum = active.reduce((acc, r) => acc + (r.progress || 0), 0);
+      taskScore = Math.round(sum / active.length);
+    }
+
+    active.sort((a, b) => (a.daysLeft == null ? 9999 : a.daysLeft) - (b.daysLeft == null ? 9999 : b.daysLeft));
+
+    return {
+      success: true,
+      data: {
+        active,
+        completed: completed.slice(0, 8),
+        taskScore,
+        today: new Date().toLocaleDateString('en-GB')
+      }
+    };
+  } catch (err) {
+    console.error('[Google Sheets] fetchAssignedTasks error:', err);
+    return { success: false, message: err.message, data: { active: [], completed: [], taskScore: 0 } };
+  }
+}
+
+export async function updateAssignedChecklist({ itemId, done, by }) {
+  try {
+    const itemRows = await readSheet(APP_DB_ID, 'Tasks_Checklist');
+    let rowIdx = -1;
+    let taskId = '';
+    for (let i = 1; i < (itemRows || []).length; i++) {
+      if (String(itemRows[i][0] || '').trim() === String(itemId).trim()) {
+        rowIdx = i + 1;
+        taskId = String(itemRows[i][1] || '').trim();
+        break;
+      }
+    }
+    if (rowIdx === -1) return { success: false, message: 'Checklist item not found.' };
+
+    const isDoneStr = done ? 'TRUE' : 'FALSE';
+    const nowIso = new Date().toISOString();
+    await updateRange(APP_DB_ID, `Tasks_Checklist!E${rowIdx}:G${rowIdx}`, [[
+      isDoneStr,
+      done ? nowIso : '',
+      done ? String(by || '') : ''
+    ]]);
+
+    const [subRows, freshItemRows] = await Promise.all([
+      readSheet(APP_DB_ID, 'Tasks_Sub'),
+      readSheet(APP_DB_ID, 'Tasks_Checklist')
+    ]);
+    const prog = computeAssignedTaskProgress(taskId, subRows, freshItemRows);
+
+    const mainRows = await readSheet(APP_DB_ID, 'Tasks_Main');
+    for (let i = 1; i < (mainRows || []).length; i++) {
+      if (String(mainRows[i][0] || '').trim() === taskId) {
+        const mainRowIdx = i + 1;
+        await updateRange(APP_DB_ID, `Tasks_Main!K${mainRowIdx}`, [[prog]]);
+        if (prog > 0 && String(mainRows[i][9] || '').trim() === 'Open') {
+          await updateRange(APP_DB_ID, `Tasks_Main!J${mainRowIdx}`, [['In Progress']]);
+        }
+        break;
+      }
+    }
+
+    return { success: true, taskId, progress: prog };
+  } catch (err) {
+    console.error('[Google Sheets] updateAssignedChecklist error:', err);
+    return { success: false, message: err.message };
+  }
+}
+
+export async function updateAssignedSubTask({ subTaskId, done, by }) {
+  try {
+    const subRows = await readSheet(APP_DB_ID, 'Tasks_Sub');
+    let rowIdx = -1;
+    let taskId = '';
+    for (let i = 1; i < (subRows || []).length; i++) {
+      if (String(subRows[i][0] || '').trim() === String(subTaskId).trim()) {
+        rowIdx = i + 1;
+        taskId = String(subRows[i][1] || '').trim();
+        break;
+      }
+    }
+    if (rowIdx === -1) return { success: false, message: 'Sub-task not found.' };
+
+    await updateRange(APP_DB_ID, `Tasks_Sub!E${rowIdx}`, [[done ? 'Done' : 'Open']]);
+
+    const [freshSubRows, itemRows] = await Promise.all([
+      readSheet(APP_DB_ID, 'Tasks_Sub'),
+      readSheet(APP_DB_ID, 'Tasks_Checklist')
+    ]);
+    const prog = computeAssignedTaskProgress(taskId, freshSubRows, itemRows);
+
+    const mainRows = await readSheet(APP_DB_ID, 'Tasks_Main');
+    for (let i = 1; i < (mainRows || []).length; i++) {
+      if (String(mainRows[i][0] || '').trim() === taskId) {
+        const mainRowIdx = i + 1;
+        await updateRange(APP_DB_ID, `Tasks_Main!K${mainRowIdx}`, [[prog]]);
+        if (prog > 0 && String(mainRows[i][9] || '').trim() === 'Open') {
+          await updateRange(APP_DB_ID, `Tasks_Main!J${mainRowIdx}`, [['In Progress']]);
+        }
+        break;
+      }
+    }
+
+    return { success: true, taskId, progress: prog };
+  } catch (err) {
+    console.error('[Google Sheets] updateAssignedSubTask error:', err);
+    return { success: false, message: err.message };
+  }
+}
+
+export async function submitAssignedTask({ taskId, by }) {
+  try {
+    const mainRows = await readSheet(APP_DB_ID, 'Tasks_Main');
+    let rowIdx = -1;
+    let deadline = '';
+    for (let i = 1; i < (mainRows || []).length; i++) {
+      if (String(mainRows[i][0] || '').trim() === String(taskId).trim()) {
+        rowIdx = i + 1;
+        deadline = mainRows[i][8] ? String(mainRows[i][8]) : '';
+        break;
+      }
+    }
+    if (rowIdx === -1) return { success: false, message: 'Task not found.' };
+
+    const now = new Date();
+    const nowIso = now.toISOString();
+    await updateRange(APP_DB_ID, `Tasks_Main!J${rowIdx}:K${rowIdx}`, [['Completed', 100]]);
+    await updateRange(APP_DB_ID, `Tasks_Main!M${rowIdx}`, [[nowIso]]);
+    await updateRange(APP_DB_ID, `Tasks_Main!Q${rowIdx}`, [[nowIso]]);
+
+    const d = deadline ? new Date(deadline.replace('T', ' ')) : null;
+    const late = !!(d && !isNaN(d.getTime()) && now.getTime() > d.getTime());
+
+    try {
+      await appendRow(APP_DB_ID, 'Tasks_Remarks', [
+        'RMK-' + now.getTime(),
+        String(taskId),
+        `Task submitted by ${String(by || 'employee')}${late ? ' (AFTER deadline)' : ' (on time)'}`,
+        String(by || ''),
+        nowIso
+      ]);
+    } catch (remErr) {
+      console.warn('[Google Sheets] Tasks_Remarks append notice:', remErr.message);
+    }
+
+    return { success: true, late, completedAt: nowIso };
+  } catch (err) {
+    console.error('[Google Sheets] submitAssignedTask error:', err);
+    return { success: false, message: err.message };
+  }
+}
+
 // Export spreadsheet IDs for use elsewhere
 export { MASTER_DB_ID, APP_DB_ID, KRA_SOP_DB_ID };
+
 

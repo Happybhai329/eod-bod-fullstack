@@ -4,7 +4,16 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { initDatabase, query, run, get } from './db.js';
-import { syncDailyReportToSheets, syncFineToSheets, syncUserConfigToSheets, syncDepartmentToSheets } from './googleSheets.js';
+import {
+  syncDailyReportToSheets,
+  syncFineToSheets,
+  syncUserConfigToSheets,
+  syncDepartmentToSheets,
+  fetchAssignedTasks,
+  updateAssignedChecklist,
+  updateAssignedSubTask,
+  submitAssignedTask
+} from './googleSheets.js';
 import { startAutoSync, runTwoWaySync, getSyncStatus } from './syncEngine.js';
 import {
   calculatePerformance,
@@ -630,6 +639,52 @@ app.post('/api/head/rate', async (req, res) => {
     if (updated) asyncSyncReport(updated);
 
     res.json({ success: true, finalScore, headRating: numRating, message: 'Rating saved successfully.' });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// -------------------------------------------------------------
+// ASSIGNED TASKS (1:1 with Reference GS App)
+// -------------------------------------------------------------
+app.get('/api/assigned-tasks/:empId', async (req, res) => {
+  try {
+    const empId = req.params.empId;
+    const result = await fetchAssignedTasks(empId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message, data: { active: [], completed: [], taskScore: 0 } });
+  }
+});
+
+app.post('/api/assigned-tasks/checklist', async (req, res) => {
+  try {
+    const { itemId, done, by } = req.body;
+    if (!itemId) return res.status(400).json({ success: false, message: 'Item ID required.' });
+    const result = await updateAssignedChecklist({ itemId, done, by });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/assigned-tasks/subtask', async (req, res) => {
+  try {
+    const { subTaskId, done, by } = req.body;
+    if (!subTaskId) return res.status(400).json({ success: false, message: 'SubTask ID required.' });
+    const result = await updateAssignedSubTask({ subTaskId, done, by });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+app.post('/api/assigned-tasks/submit', async (req, res) => {
+  try {
+    const { taskId, by } = req.body;
+    if (!taskId) return res.status(400).json({ success: false, message: 'Task ID required.' });
+    const result = await submitAssignedTask({ taskId, by });
+    res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }

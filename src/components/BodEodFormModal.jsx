@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import AssignedTasksPanel from './AssignedTasksPanel';
 
 /**
  * Escapes HTML characters for safe PDF generation.
@@ -227,8 +228,10 @@ export default function BodEodFormModal({
         } else if (t.subCategories && t.subCategories.length > 0) {
           subCatEntries.push({ key: t.subCategories[0], val: '' });
         }
+        const fallbackTarget = bodSaved?.value !== undefined ? bodSaved.value : (t.target || '');
         initialForm[taskName] = {
           type: 'categoryNumber',
+          value: savedData?.value !== undefined ? savedData.value : fallbackTarget,
           subCatEntries,
           remarks: savedData?.remarks || ''
         };
@@ -409,7 +412,7 @@ export default function BodEodFormModal({
   const updateNumberValue = (taskName, value) => {
     setFormData(prev => ({
       ...prev,
-      [taskName]: { ...prev[taskName], value, type: 'number' }
+      [taskName]: { ...prev[taskName], value, type: prev[taskName]?.type || 'number' }
     }));
   };
 
@@ -838,6 +841,9 @@ export default function BodEodFormModal({
                 </div>
               )}
 
+              {/* Exact GS App Assigned Tasks Panel */}
+              <AssignedTasksPanel empId={user?.id || user?.emp_id} isModal={true} />
+
               {/* Render visible tasks */}
               {visibleTasks.map((t, i) => {
                 const taskName = t.taskName;
@@ -1196,13 +1202,13 @@ export default function BodEodFormModal({
                         {/* ===================================== */}
                         {/* 3. NUMBER / STANDARD INPUT */}
                         {/* ===================================== */}
-                        {t.inputType === 'number' && (
+                        {t.inputType !== 'dynamicList' && t.inputType !== 'checkbox' && (
                           <div>
                             <label className="form-label mt-2 text-muted fw-bold">
                               {phase === 'EOD' ? 'Achieved Count / Details' : 'Main Target / Text'}
                             </label>
                             <input
-                              type="number"
+                              type={t.inputType === 'number' ? 'number' : 'text'}
                               className="form-control main-val border-primary"
                               placeholder="Enter details or number"
                               value={taskState.value !== undefined ? taskState.value : ''}

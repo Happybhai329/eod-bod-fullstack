@@ -1,4 +1,13 @@
 import React, { useState, useEffect } from 'react';
+import AssignedTasksPanel from './AssignedTasksPanel';
+
+function formatRemainingTime(ms) {
+  if (ms == null || isNaN(ms) || ms <= 0) return '';
+  const totalMin = Math.floor(ms / 60000);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return `${h}h ${m}m`;
+}
 
 export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenKraSop, onOpenDetail }) {
   const [filter, setFilter] = useState('Weekly');
@@ -16,10 +25,17 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
   const [fineStatusChoice, setFineStatusChoice] = useState('Acknowledged');
   const [employeeRemarks, setEmployeeRemarks] = useState('');
   const [updatingFine, setUpdatingFine] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState(Date.now());
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
     fetchFormAndDashboard();
   }, [user.id, filter]);
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
 
   const fetchFormAndDashboard = async () => {
     setLoading(true);
@@ -28,10 +44,12 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
       const formRes = await fetch(`/api/employee/${user.id}/form`);
       const formData = await formRes.json();
       if (formData.success) {
-        setTodayStatus(formData.todayStatus);
+        setTodayStatus(formData.todayStatus || { bodFilled: false, eodFilled: false });
         setBodData(formData.bodData);
         setEodData(formData.eodData);
         setConfig(formData.config || []);
+        setFetchedAt(Date.now());
+        setNow(Date.now());
       }
 
       // Fetch dashboard performance & history
@@ -46,6 +64,12 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
       setLoading(false);
     }
   };
+
+  const elapsed = Math.max(0, now - fetchedAt);
+  const bodRemaining = Math.max(0, (todayStatus.bodRemainingMs || 0) - elapsed);
+  const eodRemaining = Math.max(0, (todayStatus.eodRemainingMs || 0) - elapsed);
+  const isBodEditable = todayStatus.bodEditable && (todayStatus.bodRemainingMs ? bodRemaining > 0 : true);
+  const isEodEditable = todayStatus.eodEditable && (todayStatus.eodRemainingMs ? eodRemaining > 0 : true);
 
   const handleOpenFineResponse = (fine) => {
     setSelectedFine(fine);
@@ -136,19 +160,50 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               {todayStatus.bodFilled ? (
                 <span className="badge badge-approved">Submitted</span>
               ) : (
-                <span className="badge badge-pending">Not Submitted</span>
+                <span className="badge badge-pending">Pending</span>
               )}
             </div>
-            <p style={{ fontSize: '0.84rem', color: 'var(--ink-muted)', marginBottom: '16px' }}>
+            <p style={{ fontSize: '0.84rem', color: 'var(--ink-muted)', marginBottom: '8px' }}>
               Define today's key priorities, targets, and expected outcomes.
             </p>
-            <button
-              className="btn btn-primary"
-              style={{ width: '100%' }}
-              onClick={() => onOpenForm('BOD', config, bodData, eodData)}
-            >
-              <i className="bi bi-sun me-1"></i> {todayStatus.bodFilled ? 'Edit Morning BOD' : 'Open BOD Form'}
-            </button>
+            {todayStatus.bodFilled ? (
+              isBodEditable ? (
+                <span className="small text-warning fw-semibold d-block mb-3">
+                  Edit available for {formatRemainingTime(bodRemaining)}
+                </span>
+              ) : (
+                <span className="small text-muted d-block mb-3">Edit window closed</span>
+              )
+            ) : (
+              <span className="small text-muted d-block mb-3">Not submitted yet</span>
+            )}
+            {todayStatus.bodFilled ? (
+              isBodEditable ? (
+                <button
+                  className="btn btn-warning"
+                  style={{ width: '100%' }}
+                  onClick={() => onOpenForm('BOD', config, bodData, eodData)}
+                >
+                  <i className="bi bi-pencil-square me-1"></i> Edit Morning BOD
+                </button>
+              ) : (
+                <button
+                  className="btn btn-outline-primary"
+                  style={{ width: '100%' }}
+                  disabled
+                >
+                  <i className="bi bi-check-circle me-1"></i> Morning BOD Submitted
+                </button>
+              )
+            ) : (
+              <button
+                className="btn btn-primary"
+                style={{ width: '100%' }}
+                onClick={() => onOpenForm('BOD', config, bodData, eodData)}
+              >
+                <i className="bi bi-sun me-1"></i> Open BOD Form
+              </button>
+            )}
           </div>
 
           {/* EOD Tile */}
@@ -161,22 +216,56 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               {todayStatus.eodFilled ? (
                 <span className="badge badge-approved">Submitted</span>
               ) : (
-                <span className="badge badge-pending">Not Submitted</span>
+                <span className="badge badge-pending">Pending</span>
               )}
             </div>
-            <p style={{ fontSize: '0.84rem', color: 'var(--ink-muted)', marginBottom: '16px' }}>
+            <p style={{ fontSize: '0.84rem', color: 'var(--ink-muted)', marginBottom: '8px' }}>
               Record actual completions and calculate today's performance score.
             </p>
-            <button
-              className="btn btn-gold"
-              style={{ width: '100%' }}
-              onClick={() => onOpenForm('EOD', config, bodData, eodData)}
-            >
-              <i className="bi bi-moon-stars me-1"></i> {todayStatus.eodFilled ? 'Edit Evening EOD' : 'Open EOD Form'}
-            </button>
+            {todayStatus.eodFilled ? (
+              isEodEditable ? (
+                <span className="small text-warning fw-semibold d-block mb-3">
+                  Edit available for {formatRemainingTime(eodRemaining)}
+                </span>
+              ) : (
+                <span className="small text-muted d-block mb-3">Edit window closed</span>
+              )
+            ) : (
+              <span className="small text-muted d-block mb-3">Not submitted yet</span>
+            )}
+            {todayStatus.eodFilled ? (
+              isEodEditable ? (
+                <button
+                  className="btn btn-warning"
+                  style={{ width: '100%' }}
+                  onClick={() => onOpenForm('EOD', config, bodData, eodData)}
+                >
+                  <i className="bi bi-pencil-square me-1"></i> Edit Evening EOD
+                </button>
+              ) : (
+                <button
+                  className="btn btn-outline-success"
+                  style={{ width: '100%' }}
+                  disabled
+                >
+                  <i className="bi bi-check-circle me-1"></i> Evening EOD Submitted
+                </button>
+              )
+            ) : (
+              <button
+                className="btn btn-gold"
+                style={{ width: '100%' }}
+                onClick={() => onOpenForm('EOD', config, bodData, eodData)}
+              >
+                <i className="bi bi-moon-stars me-1"></i> Open EOD Form
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Assigned Tasks Card */}
+      <AssignedTasksPanel empId={user.id} isModal={false} showToast={showToast} />
 
       {/* Performance Card */}
       <div className="app-card">
