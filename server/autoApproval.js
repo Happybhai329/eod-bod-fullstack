@@ -69,19 +69,40 @@ export async function checkAutoApprovals() {
         const expiryDateStr = new Date(expiryTime).toISOString();
         const nowIso = new Date().toISOString();
 
-        await run(
-          `UPDATE daily_reports 
-           SET system_score = ?,
-               head_rating = ?, 
-               final_score = ?, 
-               approval_status = 'Auto Approved', 
-               approval_timestamp = ?, 
-               rated_by = 'System (Auto Approval)', 
-               rated_on = ?, 
-               last_updated = ? 
-           WHERE id = ? OR (date = ? AND employee_id = ?)`,
-          [sysScore, DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, nowIso, r.id, r.date, r.employee_id]
-        );
+        const isPg = Boolean(process.env.DATABASE_URL);
+        if (isPg) {
+          await run(
+            `UPDATE daily_reports 
+             SET system_score = ?,
+                 "systemScore" = ?,
+                 head_rating = ?, 
+                 "headRating" = ?,
+                 final_score = ?, 
+                 "finalScore" = ?,
+                 approval_status = 'Auto Approved', 
+                 approval_timestamp = ?, 
+                 rated_by = 'System (Auto Approval)', 
+                 rated_on = ?, 
+                 last_updated = ?,
+                 "lastUpdated" = ?
+             WHERE id = ? OR (date = ? AND employee_id = ?)`,
+            [sysScore, sysScore, DEFAULT_HEAD_RATING, String(DEFAULT_HEAD_RATING), finalScore, finalScore, expiryDateStr, expiryDateStr, nowIso, nowIso, r.id, r.date, r.employee_id]
+          );
+        } else {
+          await run(
+            `UPDATE daily_reports 
+             SET system_score = ?,
+                 head_rating = ?, 
+                 final_score = ?, 
+                 approval_status = 'Auto Approved', 
+                 approval_timestamp = ?, 
+                 rated_by = 'System (Auto Approval)', 
+                 rated_on = ?, 
+                 last_updated = ? 
+             WHERE id = ? OR (date = ? AND employee_id = ?)`,
+            [sysScore, DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, nowIso, r.id, r.date, r.employee_id]
+          );
+        }
 
         // Send employee notification
         try {
