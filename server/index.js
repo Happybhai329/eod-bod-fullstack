@@ -15,6 +15,7 @@ import {
   submitAssignedTask
 } from './googleSheets.js';
 import { startAutoSync, runTwoWaySync, getSyncStatus } from './syncEngine.js';
+import { checkAutoApprovals } from './autoApproval.js';
 import {
   calculatePerformance,
   calculateFinalScore,
@@ -103,40 +104,8 @@ function isDateInFilter(dateStr, filter) {
   return true;
 }
 
-// Automatic review auto-approval check
-async function checkAutoApprovals() {
-  try {
-    const now = new Date().getTime();
-    const reports = await query(`SELECT * FROM daily_reports WHERE approval_status = 'Pending Review' AND eod_data IS NOT NULL AND eod_data != ''`);
-    for (const r of reports) {
-      let expiryTime = r.expiry_timestamp ? new Date(r.expiry_timestamp).getTime() : null;
-      if (!expiryTime && r.last_updated) {
-        expiryTime = new Date(r.last_updated).getTime() + REVIEW_WINDOW_MS;
-      }
-      if (expiryTime && now > expiryTime) {
-        const sysScore = parseScoreHelper(r.system_score, 100);
-        const finalScore = calculateFinalScore(sysScore, DEFAULT_HEAD_RATING);
-        const expiryDateStr = new Date(expiryTime).toISOString();
+// Note: checkAutoApprovals is imported from ./autoApproval.js and handles 24h review window expiration
 
-        await run(
-          `UPDATE daily_reports SET head_rating = ?, final_score = ?, approval_status = 'Auto Approved', approval_timestamp = ?, rated_by = 'System (Auto Approval)', rated_on = ?, last_updated = ? WHERE id = ?`,
-          [DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, new Date().toISOString(), r.id]
-        );
-
-        const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
-        await run(
-          `INSERT INTO notifications (id, employee_id, type, message, created_on, read) VALUES (?, ?, ?, ?, ?, 0)`,
-          [notifId, r.employee_id, 'Auto Approved', `Your report for ${r.date} was auto-approved with a head rating of 100%.`, new Date().toISOString()]
-        );
-
-        const updated = await get(`SELECT * FROM daily_reports WHERE id = ?`, [r.id]);
-        if (updated) asyncSyncReport(updated);
-      }
-    }
-  } catch (err) {
-    console.error('Auto approval error:', err);
-  }
-}
 
 // -------------------------------------------------------------
 // HEALTH CHECK ROUTE (Render & Cloud Monitoring)
@@ -271,6 +240,7 @@ app.post('/api/structure/remove', async (req, res) => {
 // -------------------------------------------------------------
 app.get('/api/employee/:id/form', async (req, res) => {
   try {
+    await checkAutoApprovals();
     const empId = req.params.id;
     const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found or inactive.' });
@@ -1049,6 +1019,9 @@ if (isMainModule) {
   initDatabase().then(() => {
     app.listen(PORT, () => {
       console.log(`EOD/BOD Full Stack Server running at http://localhost:${PORT}`);
+      checkAutoApprovals().catch(err => {
+        console.warn('[Auto Approval] Startup check notice:', err.message);
+      });
       startAutoSync(15 * 60 * 1000);
     });
   }).catch(err => {

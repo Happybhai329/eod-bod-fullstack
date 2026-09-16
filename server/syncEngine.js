@@ -18,6 +18,7 @@ import {
   appendRows,
   normalizeDateToDDMMYYYY,
   formatIndianDateTime,
+  parseTimestampSafe,
   MASTER_DB_ID,
   APP_DB_ID,
   fetchRealEmployees,
@@ -32,6 +33,7 @@ import {
   syncDepartmentToSheets,
   syncUserConfigToSheets
 } from './googleSheets.js';
+import { checkAutoApprovals } from './autoApproval.js';
 
 let isSyncing = false;
 let lastSyncTime = null;
@@ -41,12 +43,11 @@ let autoSyncInterval = null;
 
 /**
  * Parse a timestamp to milliseconds for comparison.
+ * Uses parseTimestampSafe to handle DD/MM/YYYY, ISO, and flipped dates.
  * Returns 0 if the value is not a valid date.
  */
 function toTimestampMs(val) {
-  if (!val) return 0;
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? 0 : d.getTime();
+  return parseTimestampSafe(val) || 0;
 }
 
 /**
@@ -317,6 +318,13 @@ export async function syncInbound() {
   } catch (err) {
     summary.errors++;
     console.error('[Sync Inbound] Fines fetch error:', err.message);
+  }
+
+  // Automatically check and approve overdue reports after inbound sync
+  try {
+    await checkAutoApprovals();
+  } catch (autoErr) {
+    console.warn('[Sync Inbound] Auto-approval check notice:', autoErr.message);
   }
 
   return summary;
@@ -720,15 +728,19 @@ export function startAutoSync(intervalMs = 15 * 60 * 1000) {
 
   console.log(`[Two-Way Sync] \u23F0 Background auto-sync scheduled every ${Math.round(intervalMs / 60000)} minutes.`);
   autoSyncInterval = setInterval(() => {
-    runTwoWaySync('AUTO').catch(err => {
-      console.warn('[Two-Way Sync] Background run notice:', err.message);
-    });
+    runTwoWaySync('AUTO')
+      .then(() => checkAutoApprovals())
+      .catch(err => {
+        console.warn('[Two-Way Sync] Background run notice:', err.message);
+      });
   }, intervalMs);
 
   // Run a background sync 10 seconds after server launch
   setTimeout(() => {
-    runTwoWaySync('BOOT').catch(err => {
-      console.log('[Two-Way Sync] Initial boot sync notice:', err.message);
-    });
+    runTwoWaySync('BOOT')
+      .then(() => checkAutoApprovals())
+      .catch(err => {
+        console.log('[Two-Way Sync] Initial boot sync notice:', err.message);
+      });
   }, 10000);
 }

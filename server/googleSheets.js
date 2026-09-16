@@ -81,6 +81,76 @@ export function formatIndianDateTime(d = new Date()) {
   return `${get('day')}/${get('month')}/${get('year')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
 
+/**
+ * Safely parse any date or timestamp string/object to epoch milliseconds.
+ * Handles:
+ * - DD/MM/YYYY [HH:mm[:ss]] (e.g. '13/09/2026 15:52:10')
+ * - YYYY-MM-DD [HH:mm[:ss]] (e.g. '2026-09-12 14:05:51')
+ * - Flipped YYYY-DD-MM dates (e.g. '2026-12-09' when current month is September 2026)
+ * - ISO strings, Date objects, Excel serial numbers (30000..70000)
+ * Returns epoch milliseconds, or null if unparseable.
+ */
+export function parseTimestampSafe(val) {
+  if (val === null || val === undefined || val === '') return null;
+  if (val instanceof Date) {
+    const t = val.getTime();
+    return isNaN(t) ? null : t;
+  }
+  if (typeof val === 'number') {
+    if (isNaN(val)) return null;
+    if (val > 30000 && val < 70000) {
+      return Math.round((val - 25569) * 86400 * 1000);
+    }
+    return val;
+  }
+  const s = String(val).trim();
+  if (!s) return null;
+
+  // 1. DD/MM/YYYY [HH:mm[:ss]]
+  const ddmmyyyy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (ddmmyyyy) {
+    let d = parseInt(ddmmyyyy[1], 10);
+    let m = parseInt(ddmmyyyy[2], 10);
+    const y = parseInt(ddmmyyyy[3], 10);
+    const hr = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 0;
+    const min = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
+    const sec = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
+
+    if (m > 12 && d <= 12) {
+      const tmp = d; d = m; m = tmp;
+    }
+    const dObj = new Date(y, m - 1, d, hr, min, sec);
+    return isNaN(dObj.getTime()) ? null : dObj.getTime();
+  }
+
+  // 2. YYYY-MM-DD or YYYY-MM-DD[T/ ]HH:mm[:ss]
+  const isoMatch = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (isoMatch) {
+    const y = parseInt(isoMatch[1], 10);
+    let m = parseInt(isoMatch[2], 10);
+    let d = parseInt(isoMatch[3], 10);
+    const hr = isoMatch[4] ? parseInt(isoMatch[4], 10) : 0;
+    const min = isoMatch[5] ? parseInt(isoMatch[5], 10) : 0;
+    const sec = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
+
+    // Detect inverted YYYY-DD-MM (e.g. 2026-12-09 when it should be September 12, 2026)
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth() + 1;
+    if (y === currentYear && m > currentMonth && d <= 12) {
+      const tmp = m; m = d; d = tmp;
+    }
+
+    const dObj = new Date(y, m - 1, d, hr, min, sec);
+    return isNaN(dObj.getTime()) ? null : dObj.getTime();
+  }
+
+  // 3. Fallback standard Date parse
+  const d = new Date(s);
+  const t = d.getTime();
+  return isNaN(t) ? null : t;
+}
+
 // Spreadsheet IDs — read from .env, fallback to hardcoded values from code.gs
 const MASTER_DB_ID = process.env.MASTER_DB_SPREADSHEET_ID || '1AxdiOpaij8Lnx0TV5iMhgVlADfN0LeXzwOdmbzmrlGA';
 const APP_DB_ID = process.env.APP_DB_SPREADSHEET_ID || '1IFGc0kvv9LpbZUfEGroY8PevevJ8axdPApVrLjidlw8';
