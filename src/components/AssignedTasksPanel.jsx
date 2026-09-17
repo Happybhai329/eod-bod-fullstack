@@ -269,17 +269,22 @@ export default function AssignedTasksPanel({ empId, isModal = false, showToast }
   };
 
   if (isModal) {
+    // If no assigned tasks exist, do not render an empty box inside the submission modal
+    if (!data.active.length && !data.completed.length) {
+      return null;
+    }
+
     return (
       <div className="card p-3 mb-3 border-primary shadow-sm bg-white" id="assigned-tasks-panel">
         <div className="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
-          <h5 className="text-primary fw-bold mb-0">
+          <h6 className="text-primary fw-bold mb-0">
             <i className="bi bi-list-check me-2"></i>
             Assigned Tasks
             <span className="badge bg-primary ms-2">{data.taskScore}%</span>
-          </h5>
+          </h6>
           <button
             type="button"
-            className="btn btn-sm btn-outline-primary"
+            className="btn btn-sm btn-outline-primary py-0 px-2"
             onClick={fetchTasks}
             disabled={loading}
             title="Refresh assigned tasks"
@@ -287,8 +292,8 @@ export default function AssignedTasksPanel({ empId, isModal = false, showToast }
             <i className="bi bi-arrow-clockwise"></i>
           </button>
         </div>
-        <p className="small text-muted mb-3">
-          Checklist/sub-task par click karke complete karo — progress turant save hota hai. Pending tasks deadline tak roz yahan dikhenge, jab tak submit na karo.
+        <p className="small text-muted mb-2" style={{ fontSize: '0.8rem' }}>
+          Tasks assigned directly to you by your Department Head. Click checklist items to update progress.
         </p>
         {renderContent()}
       </div>
