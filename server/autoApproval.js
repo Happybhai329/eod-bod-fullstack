@@ -38,11 +38,24 @@ export async function checkAutoApprovals() {
       WHERE (approval_status IS NULL OR approval_status = 'Pending Review' OR approval_status = '')
         AND eod_data IS NOT NULL 
         AND eod_data != ''
+        AND eod_data != '{}'
+        AND eod_data != 'null'
     `);
 
     let autoApprovedCount = 0;
 
     for (const r of reports) {
+      // Validate that EOD data actually exists and has tasks
+      let eodObj = null;
+      if (r.eod_data) {
+        try {
+          eodObj = typeof r.eod_data === 'object' ? r.eod_data : JSON.parse(r.eod_data);
+        } catch (e) {}
+      }
+      if (!eodObj || typeof eodObj !== 'object' || Object.keys(eodObj).length === 0) {
+        continue; // Skip reports where Evening EOD was never completed
+      }
+
       let expiryTime = parseTimestampSafe(r.expiry_timestamp);
       if (!expiryTime && r.last_updated) {
         const lu = parseTimestampSafe(r.last_updated);
@@ -57,10 +70,9 @@ export async function checkAutoApprovals() {
       if (expiryTime && now > expiryTime) {
         let sysScore = parseScoreHelper(r.system_score, 100);
         // If system score was 0 or null, recompute from eod_data
-        if ((sysScore === 0 || r.system_score === null) && r.eod_data) {
-          let bodObj = null, eodObj = null;
+        if ((sysScore === 0 || r.system_score === null) && eodObj) {
+          let bodObj = null;
           try { bodObj = typeof r.bod_data === 'object' ? r.bod_data : JSON.parse(r.bod_data); } catch (e) {}
-          try { eodObj = typeof r.eod_data === 'object' ? r.eod_data : JSON.parse(r.eod_data); } catch (e) {}
           const recomputed = calculatePerformance(bodObj, eodObj);
           if (recomputed > 0) sysScore = recomputed;
         }

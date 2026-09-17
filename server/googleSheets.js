@@ -685,21 +685,23 @@ export async function syncDailyReportToSheets(report) {
   const formattedDate = targetDate.startsWith("'") ? targetDate : `'${targetDate}`;
   const formattedLastUpdated = formatIndianDateTime(report.last_updated || new Date());
 
+  const hasEod = Boolean(report.eod_data && report.eod_data !== '' && report.eod_data !== '{}' && report.eod_data !== 'null');
+
   const rowValues = [
     formattedDate,                                                  // 0: Date
     report.employee_id,                                             // 1: EmployeeID
     mergeVal(report.department, 2),                                 // 2: Department
     mergeVal(report.bod_data, 3),                                   // 3: BOD_Data
-    mergeVal(report.eod_data, 4),                                   // 4: EOD_Data
-    mergeVal(report.system_score, 5),                               // 5: System_Score_%
+    hasEod ? mergeVal(report.eod_data, 4) : '',                     // 4: EOD_Data
+    hasEod ? mergeVal(report.system_score, 5) : '',                 // 5: System_Score_%
     mergeVal(formattedLastUpdated, 6, formatIndianDateTime()),      // 6: Last_Updated
-    mergeVal(report.head_rating, 7),                                // 7: Head_Rating
-    mergeVal(report.final_score, 8),                                // 8: Final_Score_%
+    hasEod ? mergeVal(report.head_rating, 7) : '',                  // 7: Head_Rating
+    hasEod ? mergeVal(report.final_score, 8) : '',                  // 8: Final_Score_%
     mergeVal(report.attendance, 9, 'Present'),                      // 9: Attendance
     mergeVal(report.overtime, 10, 0),                               // 10: Overtime
     mergeVal(report.rating_last_updated ? formatIndianDateTime(report.rating_last_updated) : '', 11), // 11: Rating_Last_Updated
     mergeVal(report.rating_edited_by, 12),                          // 12: Rating_Edited_By
-    mergeVal(report.approval_status, 13, 'Pending Review'),         // 13: Approval_Status
+    hasEod ? mergeVal(report.approval_status, 13, 'Pending Review') : 'EOD Missed',         // 13: Approval_Status
     mergeVal(report.approval_timestamp ? formatIndianDateTime(report.approval_timestamp) : '', 14),   // 14: Approval_Timestamp
     mergeVal(report.expiry_timestamp ? formatIndianDateTime(report.expiry_timestamp) : '', 15),       // 15: Expiry_Timestamp
     mergeVal(report.rated_by, 16),                                  // 16: Rated_By

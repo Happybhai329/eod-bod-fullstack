@@ -240,14 +240,19 @@ export async function syncInbound() {
           // Merge: if Sheets has null/empty for a field, but DB already has a value, keep DB value!
           const safeBod = (r.bod_data && r.bod_data !== '') ? safeJsonString(r.bod_data) : (existing?.bod_data || null);
           const safeEod = (r.eod_data && r.eod_data !== '') ? safeJsonString(r.eod_data) : (existing?.eod_data || null);
-          const safeSysScore = sanitizeScore(r.system_score != null ? r.system_score : (existing?.system_score ?? null));
-          const safeHeadRating = r.head_rating != null ? r.head_rating : (existing?.head_rating ?? null);
-          const safeFinalScore = sanitizeScore(r.final_score != null ? r.final_score : (existing?.final_score ?? null));
+          const hasEod = Boolean(safeEod && safeEod !== '' && safeEod !== '{}' && safeEod !== 'null');
+
+          const safeSysScore = hasEod ? sanitizeScore(r.system_score != null ? r.system_score : (existing?.system_score ?? null)) : null;
+          const safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? null)) : null;
+          const safeFinalScore = hasEod ? sanitizeScore(r.final_score != null ? r.final_score : (existing?.final_score ?? null)) : null;
           const safeAttendance = r.attendance || existing?.attendance || 'Present';
           const safeOvertime = r.overtime ?? existing?.overtime ?? 0;
           const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
           const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
-          const safeApprovalStatus = r.approval_status || existing?.approval_status || 'Pending Review';
+          let safeApprovalStatus = r.approval_status || existing?.approval_status || (hasEod ? 'Pending Review' : 'EOD Missed');
+          if (!hasEod && (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Pending Review')) {
+            safeApprovalStatus = 'EOD Missed';
+          }
           const safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
           const safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
           const safeRatedBy = r.rated_by || existing?.rated_by || null;
@@ -390,21 +395,23 @@ export async function syncOutbound() {
       const formattedDate = normDate.startsWith("'") ? normDate : `'${normDate}`;
       const formattedLastUpdated = formatIndianDateTime(r.last_updated || new Date());
 
+      const hasEod = Boolean(r.eod_data && r.eod_data !== '' && r.eod_data !== '{}' && r.eod_data !== 'null');
+
       const rowValues = [
         formattedDate,
         r.employee_id,
         mergeOutboundVal(r.department, 2),
         mergeOutboundVal(r.bod_data, 3),
-        mergeOutboundVal(r.eod_data, 4),
-        mergeOutboundVal(r.system_score, 5),
+        hasEod ? mergeOutboundVal(r.eod_data, 4) : '',
+        hasEod ? mergeOutboundVal(r.system_score, 5) : '',
         mergeOutboundVal(formattedLastUpdated, 6, formatIndianDateTime()),
-        mergeOutboundVal(r.head_rating, 7),
-        mergeOutboundVal(r.final_score, 8),
+        hasEod ? mergeOutboundVal(r.head_rating, 7) : '',
+        hasEod ? mergeOutboundVal(r.final_score, 8) : '',
         mergeOutboundVal(r.attendance, 9, 'Present'),
         mergeOutboundVal(r.overtime, 10, 0),
         mergeOutboundVal(r.rating_last_updated ? formatIndianDateTime(r.rating_last_updated) : '', 11),
         mergeOutboundVal(r.rating_edited_by, 12),
-        mergeOutboundVal(r.approval_status, 13, 'Pending Review'),
+        hasEod ? mergeOutboundVal(r.approval_status, 13, 'Pending Review') : 'EOD Missed',
         mergeOutboundVal(r.approval_timestamp ? formatIndianDateTime(r.approval_timestamp) : '', 14),
         mergeOutboundVal(r.expiry_timestamp ? formatIndianDateTime(r.expiry_timestamp) : '', 15),
         mergeOutboundVal(r.rated_by, 16),

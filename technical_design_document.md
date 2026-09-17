@@ -255,7 +255,7 @@ On PostgreSQL startup, the system runs `ALTER TABLE ... ADD COLUMN IF NOT EXISTS
 |---|---|---|
 | `REVIEW_WINDOW_MS` | 86,400,000 (24h) | Auto-approval deadline after EOD submission |
 | `BOD_EDIT_WINDOW_MS` | 36,000,000 (10h) | BOD edit grace period |
-| `EOD_EDIT_WINDOW_MS` | 14,400,000 (4h) | EOD edit grace period |
+| `EOD_EDIT_WINDOW_MS` | 36,000,000 (10h) | EOD edit grace period |
 | `DEFAULT_HEAD_RATING` | 100 | Neutral multiplier for auto-approvals |
 
 ### 5.2 Endpoints

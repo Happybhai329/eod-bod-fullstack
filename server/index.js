@@ -33,7 +33,7 @@ const APPROVAL_STATUS_APPROVED = 'Approved';
 const APPROVAL_STATUS_AUTO_APPROVED = 'Auto Approved';
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const BOD_EDIT_WINDOW_MS = 10 * 60 * 60 * 1000;
-const EOD_EDIT_WINDOW_MS = 4 * 60 * 60 * 1000;
+const EOD_EDIT_WINDOW_MS = 10 * 60 * 60 * 1000;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -80,6 +80,22 @@ function toComparableDate(ddmmyyyyStr) {
   const p = ddmmyyyyStr.split('/');
   if (p.length !== 3) return '';
   return p[2] + p[1] + p[0];
+}
+
+function parseDateToMs(dStr) {
+  if (!dStr) return 0;
+  const d = parseDateDDMMYYYY(dStr);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function hasValidEod(r) {
+  if (!r || !r.eod_data) return false;
+  try {
+    const parsed = typeof r.eod_data === 'object' ? r.eod_data : JSON.parse(r.eod_data);
+    return Boolean(parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0);
+  } catch (e) {
+    return false;
+  }
 }
 
 function isDateInFilter(dateStr, filter) {
@@ -417,17 +433,13 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
     const empId = req.params.id;
     const { filter = 'Weekly' } = req.query;
 
-    const allReports = await query(`SELECT * FROM daily_reports WHERE employee_id = ? ORDER BY id DESC`, [empId]);
+    const allReports = await query(`SELECT * FROM daily_reports WHERE employee_id = ?`, [empId]);
     const fines = await query(`SELECT * FROM fines WHERE employee_id = ? ORDER BY id DESC`, [empId]);
 
-    // Apply date range filter to scores & metrics
-    const filteredReports = allReports.filter(r => isDateInFilter(r.date, filter));
+    // Sort descending by date (latest date first)
+    allReports.sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));
 
-    const scores = filteredReports
-      .filter(r => (r.approval_status === 'Approved' || r.approval_status === 'Auto Approved') && r.final_score !== null)
-      .map(r => r.final_score);
-
-    const average = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+    const todayStr = getTodayString();
 
     // Security: Sanitize Head ID from employee-facing payloads so employees never see manager IDs
     const sanitizeForEmployee = (text) => {
@@ -439,23 +451,37 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
       return clean;
     };
 
-    const sanitizedReports = allReports.map(r => ({
-      ...r,
-      system_score: sanitizeScore(r.system_score),
-      final_score: sanitizeScore(r.final_score),
-      rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
-      rated_by: sanitizeForEmployee(r.rated_by),
-      fine_issued_by: sanitizeForEmployee(r.fine_issued_by)
-    }));
+    const sanitizeReport = (r) => {
+      const validEod = hasValidEod(r);
+      const isToday = r.date === todayStr;
+      let status = r.approval_status;
+      if (!validEod) {
+        status = isToday ? 'Pending EOD' : 'EOD Missed';
+      }
+      return {
+        ...r,
+        has_eod: validEod,
+        system_score: validEod ? sanitizeScore(r.system_score) : null,
+        final_score: validEod ? sanitizeScore(r.final_score) : null,
+        approval_status: status,
+        rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
+        rated_by: sanitizeForEmployee(r.rated_by),
+        fine_issued_by: sanitizeForEmployee(r.fine_issued_by)
+      };
+    };
 
-    const sanitizedFilteredReports = filteredReports.map(r => ({
-      ...r,
-      system_score: sanitizeScore(r.system_score),
-      final_score: sanitizeScore(r.final_score),
-      rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
-      rated_by: sanitizeForEmployee(r.rated_by),
-      fine_issued_by: sanitizeForEmployee(r.fine_issued_by)
-    }));
+    const sanitizedReports = allReports.map(sanitizeReport);
+
+    // Apply date range filter to scores & metrics
+    const filteredReports = allReports.filter(r => isDateInFilter(r.date, filter));
+    const sanitizedFilteredReports = filteredReports.map(sanitizeReport);
+
+    const scores = filteredReports
+      .filter(r => hasValidEod(r) && (r.approval_status === 'Approved' || r.approval_status === 'Auto Approved') && r.final_score !== null)
+      .map(r => sanitizeScore(r.final_score))
+      .filter(s => s !== null);
+
+    const average = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
 
     const sanitizedFines = fines.map(f => ({
       ...f,
@@ -527,9 +553,11 @@ app.get('/api/head/dashboard', async (req, res) => {
       managedEmps.flatMap(e => [e.id, e.emp_id].filter(Boolean))
     );
 
-    let sql = `SELECT * FROM daily_reports WHERE eod_data IS NOT NULL AND eod_data != '' ORDER BY id DESC`;
+    let sql = `SELECT * FROM daily_reports WHERE eod_data IS NOT NULL AND eod_data != '' AND eod_data != '{}' AND eod_data != 'null'`;
     const allReports = await query(sql);
-    const reports = allReports.filter(r => managedEmpIds.has(r.employee_id));
+    const reports = allReports
+      .filter(r => managedEmpIds.has(r.employee_id) && hasValidEod(r))
+      .sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));
 
     // Filter reports according to selected time period (Daily, Weekly, Monthly)
     const filteredReports = reports.filter(r => isDateInFilter(r.date, filter));
@@ -592,7 +620,7 @@ app.post('/api/head/rate', async (req, res) => {
 
     const report = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [dateStr, empId]);
     if (!report) return res.status(404).json({ success: false, message: 'Report record not found.' });
-    if (!report.eod_data) return res.status(400).json({ success: false, message: 'An EOD report must be submitted before rating.' });
+    if (!hasValidEod(report)) return res.status(400).json({ success: false, message: 'An EOD report must be submitted before rating.' });
 
     if (report.approval_status === 'Approved' || report.approval_status === 'Auto Approved') {
       return res.status(400).json({ success: false, message: `Report is already ${report.approval_status.toLowerCase()} and locked.` });

@@ -72,7 +72,10 @@ function getPgConfig(dbUrl) {
       database: u.pathname ? u.pathname.replace(/^\//, '') : 'postgres',
       user: decodeURIComponent(u.username),
       password: decodeURIComponent(u.password),
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
+      max: 5,
+      idleTimeoutMillis: 5000,
+      connectionTimeoutMillis: 10000
     };
   } catch (e) {
     const m = dbUrl.match(/^postgres(?:ql)?:\/\/([^:]+):(.*)@([^:/]+)(?::(\d+))?\/(.+)$/);
@@ -83,10 +86,13 @@ function getPgConfig(dbUrl) {
         host: m[3],
         port: m[4] ? parseInt(m[4], 10) : 5432,
         database: m[5].split('?')[0],
-        ssl: { rejectUnauthorized: false }
+        ssl: { rejectUnauthorized: false },
+        max: 5,
+        idleTimeoutMillis: 5000,
+        connectionTimeoutMillis: 10000
       };
     }
-    return { connectionString: dbUrl, ssl: { rejectUnauthorized: false } };
+    return { connectionString: dbUrl, ssl: { rejectUnauthorized: false }, max: 5, idleTimeoutMillis: 5000, connectionTimeoutMillis: 10000 };
   }
 }
 
@@ -365,6 +371,12 @@ export async function initDatabase() {
 
       DO $$ BEGIN
         CREATE UNIQUE INDEX IF NOT EXISTS idx_daily_reports_date_emp ON daily_reports(date, employee_id);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "systemScore" DROP DEFAULT;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ALTER COLUMN "finalScore" DROP DEFAULT;
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
     `);
   } else {

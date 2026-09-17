@@ -49,7 +49,7 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
   const isLocked = approvalStatus === 'Approved' || approvalStatus === 'Auto Approved';
   const hasExistingRating = currentReport.head_rating !== null && currentReport.head_rating !== undefined;
 
-  const sysScore = safeClientPercentage(currentReport.system_score ?? currentReport.sysScore);
+  const sysScore = !hasEod ? null : safeClientPercentage(currentReport.system_score ?? currentReport.sysScore);
   const headRatingVal = hasExistingRating ? safeClientPercentage(currentReport.head_rating) : null;
   const finalScoreVal = !hasEod ? null : (!isLocked && approvalStatus === 'Pending Review' && !hasExistingRating ? null : safeClientPercentage(currentReport.final_score));
 
@@ -136,9 +136,16 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
               ) : (
                 <span
                   className="badge"
-                  style={{ background: '#fef3c7', color: '#92400e', fontSize: '0.74rem', padding: '2px 6px', fontWeight: 600 }}
+                  style={{
+                    background: approvalStatus === 'EOD Missed' ? '#fef2f2' : '#fef3c7',
+                    color: approvalStatus === 'EOD Missed' ? '#b91c1c' : '#92400e',
+                    border: `1px solid ${approvalStatus === 'EOD Missed' ? '#fca5a5' : '#fde68a'}`,
+                    fontSize: '0.74rem',
+                    padding: '2px 6px',
+                    fontWeight: 600
+                  }}
                 >
-                  Pending EOD
+                  {approvalStatus === 'EOD Missed' ? 'EOD Missed' : 'Pending EOD'}
                 </span>
               )}
             </span>
@@ -149,15 +156,15 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
               </>
             )}
             <span>|</span>
-            <span><strong>Final Score:</strong> {hasEod && finalScoreVal !== null ? `${finalScoreVal}%` : 'Pending'}</span>
+            <span><strong>Final Score:</strong> {hasEod && finalScoreVal !== null ? `${finalScoreVal}%` : (hasEod ? 'Pending' : '—')}</span>
           </div>
 
           {/* 3 Score Cards with Progress Bars */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '16px' }}>
             <div className="score-card">
               <div className="score-label">System %</div>
-              <div className="score-value" style={{ fontSize: hasEod ? '1.5rem' : '1rem' }}>
-                {hasEod ? `${sysScore}%` : 'Pending EOD'}
+              <div className="score-value" style={{ fontSize: hasEod ? '1.5rem' : '0.9rem' }}>
+                {hasEod ? `${sysScore}%` : (approvalStatus === 'EOD Missed' ? 'EOD Missed' : 'Pending EOD')}
               </div>
               <div className="progress">
                 <div className="progress-bar bg-primary" style={{ width: `${hasEod ? Math.min(100, sysScore) : 0}%` }}></div>

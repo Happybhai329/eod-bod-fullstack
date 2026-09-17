@@ -168,19 +168,29 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
     if (showToast) showToast('CSV report downloaded successfully!');
   };
 
-  const displayedReports = (data.reports || []).filter(r => {
-    const matchesSearch = !searchTerm ||
-      r.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.department && r.department.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      r.date.includes(searchTerm);
+  const parseDateToMs = (dStr) => {
+    if (!dStr) return 0;
+    const parts = String(dStr).split('/');
+    if (parts.length === 3) return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
+    return new Date(dStr).getTime() || 0;
+  };
 
-    const matchesStatus = statusFilter === 'All' ||
-      (statusFilter === 'Pending' && r.approval_status === 'Pending Review') ||
-      (statusFilter === 'Approved' && r.approval_status === 'Approved') ||
-      (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved');
+  const displayedReports = [...(data.reports || [])]
+    .sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date))
+    .filter(r => {
+      const matchesSearch = !searchTerm ||
+        r.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (r.department && r.department.toLowerCase().includes(searchTerm.toLowerCase())) ||
+        r.date.includes(searchTerm);
 
-    return matchesSearch && matchesStatus;
-  });
+      const matchesStatus = statusFilter === 'All' ||
+        (statusFilter === 'Pending' && r.approval_status === 'Pending Review') ||
+        (statusFilter === 'Approved' && r.approval_status === 'Approved') ||
+        (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved') ||
+        (statusFilter === 'EOD Missed' && r.approval_status === 'EOD Missed');
+
+      return matchesSearch && matchesStatus;
+    });
 
   return (
     <div>
@@ -353,8 +363,8 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
           </div>
         </div>
 
-        <div className="table-shell">
-          <table className="data-table">
+        <div className="table-shell" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table className="data-table" style={{ minWidth: '820px' }}>
             <thead>
               <tr>
                 <th>Date</th>

@@ -493,12 +493,87 @@ button, input, select, textarea {
   }
 }
 
+/* Navbar layout */
+.navbar-right-group {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: nowrap;
+}
+
+.navbar-view-switcher {
+  display: flex;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 3px;
+  border-radius: 8px;
+  gap: 4px;
+}
+
+.navbar-user-info {
+  text-align: right;
+  font-size: 0.85rem;
+}
+
+.navbar-user-name {
+  font-weight: 700;
+  color: white;
+  white-space: nowrap;
+}
+
+.navbar-user-dept {
+  color: #94a3b8;
+  font-size: 0.75rem;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.navbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 @media (max-width: 768px) {
   .app-container {
-    padding: 16px 12px;
+    padding: 12px 10px 40px;
   }
   .app-navbar {
-    padding: 12px 16px;
+    padding: 10px 14px;
+    gap: 10px;
+  }
+  .brand-copy strong {
+    font-size: 0.88rem;
+  }
+  .brand-subtitle {
+    display: none !important;
+  }
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+    font-size: 0.95rem;
+  }
+  .navbar-right-group {
+    gap: 8px;
+  }
+  .navbar-user-dept {
+    display: none !important;
+  }
+  .navbar-user-name {
+    font-size: 0.82rem;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .signout-text {
+    display: none !important;
+  }
+  .btn-signout {
+    padding: 7px 10px !important;
+  }
+  .btn-label-responsive {
+    display: none !important;
   }
   .metric-grid {
     grid-template-columns: 1fr;
@@ -507,6 +582,35 @@ button, input, select, textarea {
     bottom: 16px;
     right: 16px;
     left: 16px;
+  }
+  .section-header {
+    margin-bottom: 14px;
+    gap: 10px;
+  }
+  .app-card {
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .table-shell {
+    border-radius: var(--radius-sm);
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table th, .data-table td {
+    padding: 10px 12px;
+    font-size: 0.8rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .navbar-user-info {
+    display: none !important;
+  }
+  .brand-copy strong {
+    font-size: 0.82rem;
+  }
+  .btn {
+    padding: 8px 14px;
+    font-size: 0.82rem;
   }
 }
 

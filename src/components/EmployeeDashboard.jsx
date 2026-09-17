@@ -17,6 +17,25 @@ function formatScorePercent(val) {
   return `${Math.round(n)}%`;
 }
 
+function parseDateToMs(dStr) {
+  if (!dStr) return 0;
+  const parts = String(dStr).split('/');
+  if (parts.length === 3) return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
+  return new Date(dStr).getTime() || 0;
+}
+
+function hasEod(r) {
+  if (!r) return false;
+  if (r.has_eod !== undefined) return Boolean(r.has_eod);
+  if (!r.eod_data) return false;
+  try {
+    const parsed = typeof r.eod_data === 'object' ? r.eod_data : JSON.parse(r.eod_data);
+    return Boolean(parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0);
+  } catch (e) {
+    return false;
+  }
+}
+
 export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenKraSop, onOpenDetail }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ average: 0, reports: [], fines: [] });
@@ -113,7 +132,14 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
     }
   };
 
-  const getStatusBadge = (status) => {
+  const getStatusBadge = (r) => {
+    const status = typeof r === 'string' ? r : (r.approval_status || r.ratingStatus);
+    if (status === 'EOD Missed') {
+      return <span className="badge" style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fca5a5' }}>EOD Missed</span>;
+    }
+    if (status === 'Pending EOD') {
+      return <span className="badge badge-pending">Pending EOD</span>;
+    }
     if (status === 'Approved') return <span className="badge badge-approved">Approved</span>;
     if (status === 'Auto Approved') return <span className="badge badge-auto">Auto Approved</span>;
     return <span className="badge badge-pending">Pending Review</span>;
@@ -135,7 +161,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
           </p>
         </div>
 
-        <div style={{ display: 'flex', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
           <button className="btn btn-secondary" onClick={onOpenKraSop}>
             <i className="bi bi-journal-text me-1"></i> View KRA & SOPs
           </button>
@@ -157,7 +183,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
           </span>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
           {/* BOD Tile */}
           <div style={{ background: 'var(--surface-raised)', border: '1px solid var(--line)', borderRadius: 'var(--radius)', padding: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
@@ -413,12 +439,13 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               <option value="Pending">Pending Review</option>
               <option value="Approved">Approved</option>
               <option value="Auto Approved">Auto Approved</option>
+              <option value="EOD Missed">EOD Missed</option>
             </select>
           </div>
         </div>
 
-        <div className="table-shell">
-          <table className="data-table">
+        <div className="table-shell" style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table className="data-table" style={{ minWidth: '640px' }}>
             <thead>
               <tr>
                 <th>Date</th>
@@ -432,12 +459,14 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
             </thead>
             <tbody>
               {(() => {
-                const filtered = (data.reports || []).filter(r => {
+                const sortedReports = [...(data.reports || [])].sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));
+                const filtered = sortedReports.filter(r => {
                   const matchesSearch = !searchTerm || r.date.includes(searchTerm);
                   const matchesStatus = statusFilter === 'All' ||
-                    (statusFilter === 'Pending' && r.approval_status === 'Pending Review') ||
+                    (statusFilter === 'Pending' && (r.approval_status === 'Pending Review' || r.approval_status === 'Pending EOD')) ||
                     (statusFilter === 'Approved' && r.approval_status === 'Approved') ||
-                    (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved');
+                    (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved') ||
+                    (statusFilter === 'EOD Missed' && r.approval_status === 'EOD Missed');
                   return matchesSearch && matchesStatus;
                 });
 
@@ -451,29 +480,44 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                   );
                 }
 
-                return filtered.map((r) => (
-                  <tr key={r.id || r.date}>
-                    <td style={{ fontWeight: 600 }}>{r.date}</td>
-                    <td>{formatScorePercent(r.system_score ?? r.sysScore)}</td>
-                    <td>{r.head_rating !== null && r.head_rating !== undefined ? formatScorePercent(r.head_rating) : 'Not Rated'}</td>
-                    <td style={{ fontWeight: 700, color: 'var(--primary)' }}>
-                      {r.final_score !== null && r.final_score !== undefined ? formatScorePercent(r.final_score) : 'Pending'}
-                    </td>
-                    <td>{getStatusBadge(r.approval_status || r.ratingStatus)}</td>
-                    <td>
-                      {r.fine_amount > 0 ? (
-                        <span className="badge badge-danger">₹{r.fine_amount}</span>
-                      ) : (
-                        <span style={{ color: 'var(--ink-muted)' }}>-</span>
-                      )}
-                    </td>
-                    <td>
-                      <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail(r)}>
-                        <i className="bi bi-eye"></i> Details
-                      </button>
-                    </td>
-                  </tr>
-                ));
+                return filtered.map((r) => {
+                  const validEod = hasEod(r);
+                  return (
+                    <tr key={r.id || r.date}>
+                      <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{r.date}</td>
+                      <td>
+                        {!validEod ? (
+                          <span className="badge" style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #fca5a5', fontSize: '0.72rem' }}>
+                            {r.approval_status === 'Pending EOD' ? 'Pending EOD' : 'EOD Missed'}
+                          </span>
+                        ) : (
+                          formatScorePercent(r.system_score ?? r.sysScore)
+                        )}
+                      </td>
+                      <td>{validEod && r.head_rating !== null && r.head_rating !== undefined ? formatScorePercent(r.head_rating) : 'Not Rated'}</td>
+                      <td style={{ fontWeight: 700, color: 'var(--primary)' }}>
+                        {!validEod ? (
+                          <span style={{ color: 'var(--ink-muted)' }}>—</span>
+                        ) : (
+                          r.final_score !== null && r.final_score !== undefined ? formatScorePercent(r.final_score) : 'Pending'
+                        )}
+                      </td>
+                      <td>{getStatusBadge(r)}</td>
+                      <td>
+                        {r.fine_amount > 0 ? (
+                          <span className="badge badge-danger">₹{r.fine_amount}</span>
+                        ) : (
+                          <span style={{ color: 'var(--ink-muted)' }}>-</span>
+                        )}
+                      </td>
+                      <td>
+                        <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail(r)}>
+                          <i className="bi bi-eye"></i> Details
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                });
               })()}
             </tbody>
           </table>
