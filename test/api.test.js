@@ -30,7 +30,7 @@ test('Database initializes and contains seeded records', async () => {
 });
 
 test('User Config get and update flow', async () => {
-  const testEmpId = 'TPC25107MR';
+  const testEmpId = 'MOCK_TEST_EMP_999';
   const customConfig = [
     { key: 'test_task', label: 'Test Task', type: 'number', target: 20, weight: 100 }
   ];
@@ -44,11 +44,12 @@ test('User Config get and update flow', async () => {
   const parsed = JSON.parse(row.config_json);
   assert.equal(parsed[0].key, 'test_task');
   assert.equal(parsed[0].target, 20);
+  await run('DELETE FROM user_configs WHERE employee_id = ?', [testEmpId]);
 });
 
 test('Fine notice creation and status update workflow', async () => {
   const fineId = 'F_TEST_' + Date.now();
-  const empId = 'TPC25107MR';
+  const empId = 'MOCK_TEST_EMP_999';
   const todayStr = getTodayString();
   const nowIso = new Date().toISOString();
 
@@ -70,6 +71,7 @@ test('Fine notice creation and status update workflow', async () => {
   fine = await get('SELECT * FROM fines WHERE id = ?', [fineId]);
   assert.equal(fine.status, 'Acknowledged');
   assert.equal(fine.employee_remarks, 'Will improve going forward.');
+  await run('DELETE FROM fines WHERE id = ?', [fineId]);
 });
 
 test('Notification creation and mark as read', async () => {
