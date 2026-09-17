@@ -265,6 +265,8 @@ export async function syncInbound() {
           const safeFineIssuedBy = r.fine_issued_by || existing?.fine_issued_by || null;
           const safeFineStatus = r.fine_status || existing?.fine_status || null;
           const safeRemarks = r.employee_remarks || existing?.employee_remarks || null;
+          const safeBodSubmittedAt = existing?.bod_submitted_at || (safeBod ? (existing?.last_updated || r.last_updated || null) : null);
+          const safeEodSubmittedAt = existing?.eod_submitted_at || (hasEod ? (existing?.last_updated || r.last_updated || null) : null);
 
           await run(
             `INSERT OR REPLACE INTO daily_reports (
@@ -274,8 +276,8 @@ export async function syncInbound() {
               approval_status, approval_timestamp, expiry_timestamp,
               rated_by, rated_on, fine_amount, fine_reason,
               fine_doc_url, fine_doc_name, fine_issued_on, fine_issued_by,
-              fine_status, employee_remarks
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              fine_status, employee_remarks, bod_submitted_at, eod_submitted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               dateNorm, empId, r.department || existing?.department || '',
               safeBod, safeEod,
@@ -288,7 +290,8 @@ export async function syncInbound() {
               safeRatedOn, safeFineAmount, safeFineReason,
               safeFineDocUrl, safeFineDocName,
               safeFineIssuedOn, safeFineIssuedBy,
-              safeFineStatus, safeRemarks
+              safeFineStatus, safeRemarks,
+              safeBodSubmittedAt, safeEodSubmittedAt
             ]
           );
           summary.reports++;

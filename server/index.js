@@ -337,35 +337,52 @@ app.get('/api/employee/:id/form', async (req, res) => {
       }
 
       if (todayReport.approval_status !== 'Approved' && todayReport.approval_status !== 'Auto Approved') {
-        const rawLastUpdated = todayReport.last_updated || todayReport.lastUpdated;
-        let lastEditTime = parseTimestampToMs(rawLastUpdated);
         const now = Date.now();
 
-        // Fallback: If lastEditTime is still 0 or unparseable, but report is for today, use creation timestamp or now
-        if (!lastEditTime || lastEditTime <= 0) {
-          const createdAtMs = parseTimestampToMs(todayReport.createdAt || todayReport.created_at);
-          lastEditTime = createdAtMs > 0 ? createdAtMs : now;
+        // 1. BOD Window (fixed 10 hours from first BOD submission)
+        if (todayStatus.bodFilled) {
+          const rawBodTime = todayReport.bod_submitted_at || todayReport.createdAt || todayReport.created_at || todayReport.last_updated;
+          const bodFirstTime = parseTimestampToMs(rawBodTime);
+          const bodTimeMs = bodFirstTime > 0 ? bodFirstTime : now;
+          const bodRemaining = bodTimeMs + BOD_EDIT_WINDOW_MS - now;
+          if (bodRemaining > 0) {
+            todayStatus.bodEditable = true;
+            todayStatus.bodRemainingMs = bodRemaining;
+          } else {
+            todayStatus.bodEditable = false;
+            todayStatus.bodRemainingMs = 0;
+          }
+        } else {
+          todayStatus.bodEditable = true;
+          todayStatus.bodRemainingMs = 0;
         }
 
+        // 2. EOD Window (fixed 10 hours from first EOD submission, or pending if BOD filled)
         if (todayStatus.eodFilled) {
-          const remaining = lastEditTime + EOD_EDIT_WINDOW_MS - now;
-          if (remaining > 0) {
-            todayStatus.bodEditable = true;
+          const rawEodTime = todayReport.eod_submitted_at || todayReport.last_updated;
+          const eodFirstTime = parseTimestampToMs(rawEodTime);
+          const eodTimeMs = eodFirstTime > 0 ? eodFirstTime : now;
+          const eodRemaining = eodTimeMs + EOD_EDIT_WINDOW_MS - now;
+          if (eodRemaining > 0) {
             todayStatus.eodEditable = true;
-            todayStatus.bodRemainingMs = remaining;
-            todayStatus.eodRemainingMs = remaining;
+            todayStatus.eodRemainingMs = eodRemaining;
+          } else {
+            todayStatus.eodEditable = false;
+            todayStatus.eodRemainingMs = 0;
           }
         } else if (todayStatus.bodFilled) {
-          const remaining = lastEditTime + BOD_EDIT_WINDOW_MS - now;
-          if (remaining > 0) {
-            todayStatus.bodEditable = true;
-            todayStatus.bodRemainingMs = remaining;
-          }
+          todayStatus.eodEditable = true;
+          todayStatus.eodRemainingMs = 0;
+        } else {
+          todayStatus.eodEditable = false;
+          todayStatus.eodRemainingMs = 0;
         }
       }
     } else {
       todayStatus.bodEditable = true;
-      todayStatus.eodEditable = true;
+      todayStatus.bodRemainingMs = 0;
+      todayStatus.eodEditable = false;
+      todayStatus.eodRemainingMs = 0;
     }
 
     res.json({
@@ -400,8 +417,8 @@ app.post('/api/employee/:id/report', async (req, res) => {
     if (!existing) {
       if (phase === 'BOD') {
         await run(
-          `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated) VALUES (?, ?, ?, ?, ?)`,
-          [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString()]
+          `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?, ?)`,
+          [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString(), now.toISOString()]
         );
       } else {
         // EOD cannot be submitted without a pre-existing BOD submission
@@ -420,9 +437,20 @@ app.post('/api/employee/:id/report', async (req, res) => {
       }
 
       if (phase === 'BOD') {
+        // Check if 10-hour edit window from first BOD submission has expired
+        const rawBodTime = existing.bod_submitted_at || existing.createdAt || existing.created_at || existing.last_updated;
+        const bodFirstTimeMs = parseTimestampToMs(rawBodTime);
+        if (bodFirstTimeMs > 0 && (now.getTime() - bodFirstTimeMs) > BOD_EDIT_WINDOW_MS) {
+          return res.status(400).json({
+            success: false,
+            message: 'The 10-hour edit window for Morning BOD has closed.'
+          });
+        }
+
+        // Preserve bod_submitted_at - never reset it on edits
         await run(
-          `UPDATE daily_reports SET bod_data = ?, last_updated = ? WHERE id = ?`,
-          [safePhaseJSON, now.toISOString(), existing.id]
+          `UPDATE daily_reports SET bod_data = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
+          [safePhaseJSON, now.toISOString(), now.toISOString(), existing.id]
         );
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       } else {
@@ -442,6 +470,18 @@ app.post('/api/employee/:id/report', async (req, res) => {
             message: 'Morning BOD report has not been submitted for today. You must submit your Morning BOD before you can submit Evening EOD.'
           });
         }
+
+        // If EOD was previously submitted, check if 10-hour edit window has expired
+        if (existing.eod_submitted_at) {
+          const eodFirstTimeMs = parseTimestampToMs(existing.eod_submitted_at);
+          if (eodFirstTimeMs > 0 && (now.getTime() - eodFirstTimeMs) > EOD_EDIT_WINDOW_MS) {
+            return res.status(400).json({
+              success: false,
+              message: 'The 10-hour edit window for Evening EOD has closed.'
+            });
+          }
+        }
+
         const sysScore = calculatePerformance(bodObj, phaseData);
         let finalScore = sysScore;
         if (existing.head_rating !== null && existing.head_rating !== undefined && existing.head_rating !== '' && existing.head_rating !== 'Auto') {
@@ -450,8 +490,8 @@ app.post('/api/employee/:id/report', async (req, res) => {
 
         const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
         await run(
-          `UPDATE daily_reports SET eod_data = ?, system_score = ?, final_score = ?, last_updated = ?, approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
-          [safePhaseJSON, sysScore, finalScore, now.toISOString(), expiryTime, existing.id]
+          `UPDATE daily_reports SET eod_data = ?, system_score = ?, final_score = ?, last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
+          [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id]
         );
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       }

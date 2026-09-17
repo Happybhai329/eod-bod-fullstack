@@ -378,6 +378,12 @@ export async function initDatabase() {
       DO $$ BEGIN
         ALTER TABLE daily_reports ALTER COLUMN "finalScore" DROP DEFAULT;
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS bod_submitted_at TEXT;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS eod_submitted_at TEXT;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
     `);
   } else {
     try {
@@ -385,6 +391,12 @@ export async function initDatabase() {
     } catch (e) {
       // Column may already exist
     }
+    try {
+      await run(`ALTER TABLE daily_reports ADD COLUMN bod_submitted_at TEXT;`);
+    } catch (e) {}
+    try {
+      await run(`ALTER TABLE daily_reports ADD COLUMN eod_submitted_at TEXT;`);
+    } catch (e) {}
   }
 
   await run(`
@@ -425,6 +437,8 @@ export async function initDatabase() {
         fine_issued_by TEXT,
         fine_status TEXT,
         employee_remarks TEXT,
+        bod_submitted_at TEXT,
+        eod_submitted_at TEXT,
         UNIQUE(date, employee_id)
       )
     `);
@@ -458,6 +472,8 @@ export async function initDatabase() {
         fine_issued_by TEXT,
         fine_status TEXT,
         employee_remarks TEXT,
+        bod_submitted_at TEXT,
+        eod_submitted_at TEXT,
         UNIQUE(date, employee_id)
       )
     `);
