@@ -344,13 +344,11 @@ app.post('/api/employee/:id/report', async (req, res) => {
           [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString()]
         );
       } else {
-        const sysScore = calculatePerformance(null, phaseData);
-        const finalScore = sysScore;
-        const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
-        await run(
-          `INSERT INTO daily_reports (date, employee_id, department, eod_data, system_score, final_score, last_updated, approval_status, expiry_timestamp) VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending Review', ?)`,
-          [todayStr, effectiveId, emp.department, safePhaseJSON, sysScore, finalScore, now.toISOString(), expiryTime]
-        );
+        // EOD cannot be submitted without a pre-existing BOD submission
+        return res.status(400).json({
+          success: false,
+          message: 'Morning BOD report has not been submitted for today. You must submit your Morning BOD before you can submit Evening EOD.'
+        });
       }
       savedReport = await get(
         `SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`,
@@ -368,6 +366,7 @@ app.post('/api/employee/:id/report', async (req, res) => {
         );
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       } else {
+        // Enforce that BOD exists and is not empty before allowing EOD submission
         let bodObj = null;
         if (existing.bod_data) {
           if (typeof existing.bod_data === 'object') {
@@ -375,6 +374,13 @@ app.post('/api/employee/:id/report', async (req, res) => {
           } else {
             try { bodObj = JSON.parse(existing.bod_data); } catch (e) {}
           }
+        }
+
+        if (!bodObj || Object.keys(bodObj).length === 0) {
+          return res.status(400).json({
+            success: false,
+            message: 'Morning BOD report has not been submitted for today. You must submit your Morning BOD before you can submit Evening EOD.'
+          });
         }
         const sysScore = calculatePerformance(bodObj, phaseData);
         let finalScore = sysScore;

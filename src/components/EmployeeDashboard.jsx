@@ -215,6 +215,10 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               </div>
               {todayStatus.eodFilled ? (
                 <span className="badge badge-approved">Submitted</span>
+              ) : !todayStatus.bodFilled ? (
+                <span className="badge" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>
+                  <i className="bi bi-lock-fill me-1"></i> Locked
+                </span>
               ) : (
                 <span className="badge badge-pending">Pending</span>
               )}
@@ -230,6 +234,10 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               ) : (
                 <span className="small text-muted d-block mb-3">Edit window closed</span>
               )
+            ) : !todayStatus.bodFilled ? (
+              <span className="small text-danger fw-semibold d-block mb-3">
+                <i className="bi bi-exclamation-triangle-fill me-1"></i> Morning BOD must be submitted first
+              </span>
             ) : (
               <span className="small text-muted d-block mb-3">Not submitted yet</span>
             )}
@@ -251,6 +259,15 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                   <i className="bi bi-check-circle me-1"></i> Evening EOD Submitted
                 </button>
               )
+            ) : !todayStatus.bodFilled ? (
+              <button
+                className="btn btn-secondary"
+                style={{ width: '100%', opacity: 0.65, cursor: 'not-allowed' }}
+                disabled
+                title="Morning BOD must be submitted before Evening EOD unlocks"
+              >
+                <i className="bi bi-lock-fill me-1"></i> Submit Morning BOD First
+              </button>
             ) : (
               <button
                 className="btn btn-gold"

@@ -532,6 +532,16 @@ export default function BodEodFormModal({
     setSaving(true);
     setError('');
 
+    // Strict validation: EOD cannot be submitted without a pre-existing Morning BOD
+    if (phase === 'EOD') {
+      const hasBod = initialBodData && typeof initialBodData === 'object' && Object.keys(initialBodData).length > 0;
+      if (!hasBod) {
+        setError('Morning BOD report has not been submitted for today. You must submit your Morning BOD before submitting Evening EOD.');
+        setSaving(false);
+        return;
+      }
+    }
+
     try {
       const fData = {};
       const empName = user?.name || 'Employee';
@@ -814,6 +824,14 @@ export default function BodEodFormModal({
               {error && (
                 <div style={{ padding: '10px', background: 'var(--danger-light)', color: 'var(--danger)', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
                   {error}
+                </div>
+              )}
+
+              {/* Warning when EOD opened without pre-existing BOD */}
+              {phase === 'EOD' && (!initialBodData || Object.keys(initialBodData).length === 0) && (
+                <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#991b1b', border: '1px solid #f87171', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem', fontWeight: 600 }}>
+                  <i className="bi bi-shield-slash-fill me-2"></i>
+                  Morning BOD Required: You cannot submit an Evening EOD report because no Morning BOD plan was submitted today.
                 </div>
               )}
 
@@ -1299,7 +1317,7 @@ export default function BodEodFormModal({
               <button
                 type="submit"
                 className="btn btn-gold fw-bold px-4"
-                disabled={saving || visibleTasks.length === 0}
+                disabled={saving || visibleTasks.length === 0 || (phase === 'EOD' && (!initialBodData || Object.keys(initialBodData).length === 0))}
               >
                 {saving ? 'Submitting report...' : 'Submit Report'}
               </button>
