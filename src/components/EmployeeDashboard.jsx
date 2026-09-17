@@ -9,6 +9,14 @@ function formatRemainingTime(ms) {
   return `${h}h ${m}m`;
 }
 
+function formatScorePercent(val) {
+  if (val === null || val === undefined || val === '' || val === '-') return '-';
+  let n = parseFloat(String(val).replace('%', '').trim());
+  if (isNaN(n)) return '-';
+  while (n > 200) n = n / 100;
+  return `${Math.round(n)}%`;
+}
+
 export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenKraSop, onOpenDetail }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ average: 0, reports: [], fines: [] });
@@ -446,10 +454,10 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                 return filtered.map((r) => (
                   <tr key={r.id || r.date}>
                     <td style={{ fontWeight: 600 }}>{r.date}</td>
-                    <td>{r.system_score ?? r.sysScore ?? '-'}%</td>
-                    <td>{r.head_rating !== null && r.head_rating !== undefined ? `${r.head_rating}%` : 'Not Rated'}</td>
+                    <td>{formatScorePercent(r.system_score ?? r.sysScore)}</td>
+                    <td>{r.head_rating !== null && r.head_rating !== undefined ? formatScorePercent(r.head_rating) : 'Not Rated'}</td>
                     <td style={{ fontWeight: 700, color: 'var(--primary)' }}>
-                      {r.final_score !== null && r.final_score !== undefined ? `${r.final_score}%` : 'Pending'}
+                      {r.final_score !== null && r.final_score !== undefined ? formatScorePercent(r.final_score) : 'Pending'}
                     </td>
                     <td>{getStatusBadge(r.approval_status || r.ratingStatus)}</td>
                     <td>

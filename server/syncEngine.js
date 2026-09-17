@@ -28,6 +28,7 @@ import {
   fetchRealSOPs,
   fetchRealDailyReports,
   fetchRealFines,
+  sanitizeScore,
   syncDailyReportToSheets,
   syncFineToSheets,
   syncDepartmentToSheets,
@@ -239,9 +240,9 @@ export async function syncInbound() {
           // Merge: if Sheets has null/empty for a field, but DB already has a value, keep DB value!
           const safeBod = (r.bod_data && r.bod_data !== '') ? safeJsonString(r.bod_data) : (existing?.bod_data || null);
           const safeEod = (r.eod_data && r.eod_data !== '') ? safeJsonString(r.eod_data) : (existing?.eod_data || null);
-          const safeSysScore = r.system_score != null ? r.system_score : (existing?.system_score ?? null);
+          const safeSysScore = sanitizeScore(r.system_score != null ? r.system_score : (existing?.system_score ?? null));
           const safeHeadRating = r.head_rating != null ? r.head_rating : (existing?.head_rating ?? null);
-          const safeFinalScore = r.final_score != null ? r.final_score : (existing?.final_score ?? null);
+          const safeFinalScore = sanitizeScore(r.final_score != null ? r.final_score : (existing?.final_score ?? null));
           const safeAttendance = r.attendance || existing?.attendance || 'Present';
           const safeOvertime = r.overtime ?? existing?.overtime ?? 0;
           const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;

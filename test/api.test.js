@@ -76,7 +76,7 @@ test('Fine notice creation and status update workflow', async () => {
 
 test('Notification creation and mark as read', async () => {
   const notifId = 'N_TEST_' + Date.now();
-  const empId = 'TPC25107MR';
+  const empId = 'MOCK_TEST_EMP_999';
   const nowIso = new Date().toISOString();
 
   await run(
@@ -90,6 +90,7 @@ test('Notification creation and mark as read', async () => {
   await run('UPDATE notifications SET read = 1 WHERE id = ?', [notifId]);
   notif = await get('SELECT * FROM notifications WHERE id = ?', [notifId]);
   assert.equal(notif.read, 1);
+  await run('DELETE FROM notifications WHERE id = ?', [notifId]);
 });
 
 test('Health endpoint returns database status and employee count', async () => {

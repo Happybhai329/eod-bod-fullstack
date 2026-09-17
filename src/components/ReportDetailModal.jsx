@@ -2,8 +2,10 @@ import React, { useState, useEffect } from 'react';
 
 function safeClientPercentage(val) {
   if (val === null || val === undefined || val === '') return 0;
-  const num = Number(val);
-  return isNaN(num) ? 0 : Math.round(num);
+  let num = Number(String(val).replace('%', '').trim());
+  if (isNaN(num)) return 0;
+  while (num > 200) num = num / 100;
+  return Math.round(num);
 }
 
 function sanitizeEditorDisplayName(nameOrId) {

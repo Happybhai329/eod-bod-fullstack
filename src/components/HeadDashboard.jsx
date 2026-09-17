@@ -1,5 +1,13 @@
 import React, { useState, useEffect } from 'react';
 
+function formatScoreNum(val) {
+  if (val === null || val === undefined || val === '' || val === '-') return '-';
+  let n = parseFloat(String(val).replace('%', '').trim());
+  if (isNaN(n)) return '-';
+  while (n > 200) n = n / 100;
+  return `${Math.round(n)}%`;
+}
+
 export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfig, onOpenFine, onOpenKraSop, onOpenStructure, onOpenDetail }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ overallAverage: 0, topPerformer: 'N/A', needsAttention: 'N/A', reports: [], managedEmployees: [] });
@@ -383,7 +391,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                       <td>{r.department}</td>
                       <td>
                         {isEodSubmitted ? (
-                          `${r.system_score ?? 0}%`
+                          formatScoreNum(r.system_score)
                         ) : (
                           <span
                             className="badge"
@@ -454,7 +462,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                         {!isEodSubmitted ? (
                           <span style={{ color: 'var(--ink-muted)', fontWeight: 500, fontSize: '0.82rem' }}>Pending EOD</span>
                         ) : r.final_score !== null && r.final_score !== undefined ? (
-                          `${r.final_score}%`
+                          formatScoreNum(r.final_score)
                         ) : (
                           'Pending'
                         )}

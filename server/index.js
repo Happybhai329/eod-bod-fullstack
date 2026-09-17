@@ -9,6 +9,7 @@ import {
   syncFineToSheets,
   syncUserConfigToSheets,
   syncDepartmentToSheets,
+  sanitizeScore,
   fetchAssignedTasks,
   updateAssignedChecklist,
   updateAssignedSubTask,
@@ -440,6 +441,8 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
 
     const sanitizedReports = allReports.map(r => ({
       ...r,
+      system_score: sanitizeScore(r.system_score),
+      final_score: sanitizeScore(r.final_score),
       rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
       rated_by: sanitizeForEmployee(r.rated_by),
       fine_issued_by: sanitizeForEmployee(r.fine_issued_by)
@@ -447,6 +450,8 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
 
     const sanitizedFilteredReports = filteredReports.map(r => ({
       ...r,
+      system_score: sanitizeScore(r.system_score),
+      final_score: sanitizeScore(r.final_score),
       rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
       rated_by: sanitizeForEmployee(r.rated_by),
       fine_issued_by: sanitizeForEmployee(r.fine_issued_by)

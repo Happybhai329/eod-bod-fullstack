@@ -294,6 +294,25 @@ export async function updateRange(spreadsheetId, range, values) {
 }
 
 /**
+ * Clear a specific range in a sheet
+ */
+export async function clearRange(spreadsheetId, range) {
+  if (!sheetsClient) await initGoogleSheets();
+  if (!sheetsClient) throw new Error('Google Sheets client not initialized');
+
+  try {
+    const response = await sheetsClient.spreadsheets.values.clear({
+      spreadsheetId,
+      range,
+    });
+    return response.data;
+  } catch (err) {
+    console.error(`[Google Sheets] Error clearing ${range}:`, err.message);
+    throw err;
+  }
+}
+
+/**
  * Batch update multiple ranges in a single Google Sheets API call
  */
 export async function batchUpdateRanges(spreadsheetId, data) {
@@ -419,6 +438,20 @@ export async function fetchRealUserConfigs() {
 }
 
 /**
+ * Sanitize score to ensure it is within 0-200% range,
+ * fixing legacy data issues where scores were multiplied by 100 repeatedly (e.g. 830000, 10000, 9100).
+ */
+export function sanitizeScore(val) {
+  if (val === null || val === undefined || val === '') return null;
+  let n = parseFloat(String(val).replace('%', '').trim());
+  if (isNaN(n)) return null;
+  while (n > 200) {
+    n = n / 100;
+  }
+  return Math.round(n);
+}
+
+/**
  * Fetch all daily reports from APP_DB
  *
  * In Google Sheets 'Daily_Reports', rows 2..N strictly follow columns A through Z (0 to 25)
@@ -430,9 +463,7 @@ export async function fetchRealDailyReports() {
   if (!data || data.length < 2) return [];
 
   const parseNum = (val) => {
-    if (val === null || val === undefined || val === '') return null;
-    const n = parseFloat(String(val).replace('%', '').trim());
-    return isNaN(n) ? null : n;
+    return sanitizeScore(val);
   };
 
   const reports = [];
