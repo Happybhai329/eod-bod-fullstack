@@ -39,6 +39,7 @@ export default function App() {
   const [activeView, setActiveView] = useState('team');
   const [unreadNotifs, setUnreadNotifs] = useState(0);
   const [toast, setToast] = useState(null);
+  const [reportRefreshCounter, setReportRefreshCounter] = useState(0);
 
   const showToast = (message, type = 'success') => {
     setToast({ message, type });
@@ -98,10 +99,10 @@ export default function App() {
     showToast('Signed out successfully.', 'info');
   };
 
-  // Open Form modal
-  const handleOpenForm = (phase, config, bodData, eodData) => {
+  // Open BOD/EOD modal
+  const handleOpenForm = (phase, cfg, bodData, eodData) => {
     setFormPhase(phase);
-    setFormConfig(config || []);
+    setFormConfig(cfg);
     setFormBodData(bodData);
     setFormEodData(eodData);
     setIsFormOpen(true);
@@ -120,6 +121,13 @@ export default function App() {
     }
     showToast(`${phase} report submitted successfully!`);
     fetchUnreadNotifs();
+
+    // Immediately update modal cache so reopen has fresh data
+    if (phase === 'BOD') setFormBodData(phaseData);
+    if (phase === 'EOD') setFormEodData(phaseData);
+
+    // Increment refresh trigger to reload dashboard from server immediately
+    setReportRefreshCounter(prev => prev + 1);
   };
 
   // Open Task Config modal
@@ -194,6 +202,7 @@ export default function App() {
             onOpenKraSop={() => setIsKraSopOpen(true)}
             onOpenStructure={() => setIsStructureOpen(true)}
             onOpenDetail={handleOpenDetail}
+            refreshTrigger={reportRefreshCounter}
           />
         ) : (
           <EmployeeDashboard
@@ -202,6 +211,7 @@ export default function App() {
             onOpenForm={handleOpenForm}
             onOpenKraSop={() => setIsKraSopOpen(true)}
             onOpenDetail={handleOpenDetail}
+            refreshTrigger={reportRefreshCounter}
           />
         )}
       </main>

@@ -106,9 +106,26 @@ export default function BodEodFormModal({
 
   // Helper to find existing task data from bod/eod payloads
   const findTaskData = (dataObj, t) => {
-    if (!dataObj || typeof dataObj !== 'object') return null;
-    if (dataObj[t.taskName]) return dataObj[t.taskName];
-    if (dataObj[t.key]) return dataObj[t.key];
+    if (!dataObj) return null;
+    let obj = dataObj;
+    if (typeof obj === 'string') {
+      try { obj = JSON.parse(obj); } catch (e) { return null; }
+    }
+    if (typeof obj !== 'object' || obj === null) return null;
+
+    if (obj[t.taskName]) return obj[t.taskName];
+    if (t.key && obj[t.key]) return obj[t.key];
+
+    // Case-insensitive, trimmed, and singular/plural fallback search (e.g. 'OTHER WORK' vs 'OTHER WORKS')
+    const targetName = (t.taskName || t.key || '').trim().toLowerCase();
+    const targetSingular = targetName.replace(/s$/, '');
+
+    for (const k of Object.keys(obj)) {
+      const normK = k.trim().toLowerCase();
+      if (normK === targetName || normK.replace(/s$/, '') === targetSingular) {
+        return obj[k];
+      }
+    }
     return null;
   };
 
@@ -133,12 +150,13 @@ export default function BodEodFormModal({
         if (phase === 'BOD') {
           // BOD Dynamic List
           let list = [];
-          if (savedData && Array.isArray(savedData.list) && savedData.list.length > 0) {
-            list = savedData.list.map(l => ({
-              title: l.title || l.text || '',
+          const rawList = savedData?.list || (Array.isArray(savedData) ? savedData : null);
+          if (Array.isArray(rawList) && rawList.length > 0) {
+            list = rawList.map(l => ({
+              title: l.title || l.text || (l.description ? l.description.split('\n')[0] : '') || '',
               time: l.time || '',
               hasTarget: l.hasTarget === true || l.hasTarget === 'true' || l.hasTarget === undefined,
-              target: l.target !== undefined ? l.target : 1,
+              target: l.target !== undefined && l.target !== '' ? l.target : 1,
               description: l.description || '',
               achieved: '',
               status: '',
@@ -152,26 +170,32 @@ export default function BodEodFormModal({
           }
           initialForm[taskName] = {
             type: 'dynamicList',
-            remarks: '',
+            remarks: savedData?.remarks || '',
             list
           };
         } else {
           // EOD Dynamic List
-          const bodList = (bodSaved && Array.isArray(bodSaved.list)) ? bodSaved.list : [];
-          const eodList = (savedData && Array.isArray(savedData.list)) ? savedData.list : [];
+          const rawBodList = bodSaved?.list || (Array.isArray(bodSaved) ? bodSaved : null);
+          const bodList = Array.isArray(rawBodList) ? rawBodList : [];
+          const rawEodList = savedData?.list || (Array.isArray(savedData) ? savedData : null);
+          const eodList = Array.isArray(rawEodList) ? rawEodList : [];
 
           // Morning items mapped to their EOD progress & checklists
           const morningItems = bodList.map((bItem) => {
-            const eMatch = eodList.find(e => e.title === bItem.title && !e.isVoluntary);
+            const bTitle = (bItem.title || bItem.text || (bItem.description ? bItem.description.split('\n')[0] : '') || '').trim();
+            const eMatch = eodList.find(e => {
+              const eTitle = (e.title || e.text || (e.description ? e.description.split('\n')[0] : '') || '').trim();
+              return (eTitle && bTitle && eTitle.toLowerCase() === bTitle.toLowerCase()) && !e.isVoluntary;
+            });
             const descLines = (bItem.description || '').split('\n').filter(x => x.trim() !== '');
             const savedChecklist = eMatch && Array.isArray(eMatch.checklist) ? eMatch.checklist : [];
             const checklist = descLines.map((_, idx) => Boolean(savedChecklist[idx]));
 
             return {
-              title: bItem.title || '',
+              title: bTitle,
               time: bItem.time || '',
               hasTarget: bItem.hasTarget === true || bItem.hasTarget === 'true' || bItem.hasTarget === undefined,
-              target: bItem.target !== undefined ? bItem.target : 1,
+              target: bItem.target !== undefined && bItem.target !== '' ? bItem.target : 1,
               description: bItem.description || '',
               achieved: eMatch ? (eMatch.achieved !== undefined ? eMatch.achieved : '') : '',
               status: eMatch ? (eMatch.status || 'Not Done') : 'Not Done',
@@ -182,11 +206,11 @@ export default function BodEodFormModal({
 
           // Voluntary extra items
           const volItems = eodList.filter(e => e.isVoluntary).map(v => ({
-            title: v.title || '',
+            title: v.title || v.text || (v.description ? v.description.split('\n')[0] : '') || '',
             time: v.time || '',
             hasTarget: v.hasTarget === true || v.hasTarget === 'true' || v.hasTarget === undefined,
             target: '',
-            description: '',
+            description: v.description || '',
             achieved: v.achieved !== undefined ? v.achieved : '',
             status: v.status || 'Not Done',
             checklist: [],
@@ -272,7 +296,7 @@ export default function BodEodFormModal({
           ...task,
           list: [
             ...(task.list || []),
-            { title: '', time: '', hasTarget: true, target: '', description: '', achieved: '', status: '', checklist: [], isVoluntary: false }
+            { title: '', time: '', hasTarget: true, target: 1, description: '', achieved: '', status: '', checklist: [], isVoluntary: false }
           ]
         }
       };
@@ -571,15 +595,19 @@ export default function BodEodFormModal({
 
             if (phase === 'BOD') {
               (taskState.list || []).forEach(item => {
-                const title = (item.title || '').trim();
+                const rawTitle = (item.title || item.text || '').trim();
                 const time = item.time || '';
                 const hasTar = item.hasTarget === true || item.hasTarget === 'true' || item.hasTarget === undefined;
-                const target = item.target !== undefined && item.target !== '' ? item.target : '';
+                const target = item.target !== undefined && item.target !== '' ? item.target : (hasTar ? 1 : '');
                 const desc = (item.description || '').trim();
 
-                if (title !== '') {
+                // If title was left blank but description has text, auto-derive title from first line of description!
+                const title = rawTitle || (desc ? desc.split('\n')[0].substring(0, 100) : '');
+
+                // Only save if there is an actual task name/description or meaningful input
+                if (title !== '' || desc !== '') {
                   tData.list.push({
-                    title,
+                    title: title || 'Task Item',
                     time,
                     hasTarget: hasTar,
                     target,
@@ -594,18 +622,20 @@ export default function BodEodFormModal({
             } else {
               // EOD phase
               (taskState.morningItems || []).forEach(mItem => {
-                const title = (mItem.title || '').trim();
+                const rawTitle = (mItem.title || mItem.text || '').trim();
                 const time = mItem.time || '';
                 const hasTar = mItem.hasTarget === true || mItem.hasTarget === 'true' || mItem.hasTarget === undefined;
-                const target = mItem.target !== undefined ? mItem.target : '';
+                const target = mItem.target !== undefined && mItem.target !== '' ? mItem.target : (hasTar ? 1 : '');
                 const desc = (mItem.description || '').trim();
                 const achieved = hasTar ? (mItem.achieved !== undefined ? mItem.achieved : '') : '';
                 const status = !hasTar ? (mItem.status || 'Not Done') : '';
                 const checklistArr = Array.isArray(mItem.checklist) ? mItem.checklist : [];
 
-                if (title !== '') {
+                const title = rawTitle || (desc ? desc.split('\n')[0].substring(0, 100) : '');
+
+                if (title !== '' || desc !== '') {
                   tData.list.push({
-                    title,
+                    title: title || 'Task Item',
                     time,
                     hasTarget: hasTar,
                     target,
@@ -620,18 +650,21 @@ export default function BodEodFormModal({
 
               if (voluntaryOpenMap[taskName]) {
                 (taskState.volItems || []).forEach(vItem => {
-                  const title = (vItem.title || '').trim();
+                  const rawTitle = (vItem.title || vItem.text || '').trim();
                   const time = vItem.time || '';
                   const hasTar = vItem.hasTarget === true || vItem.hasTarget === 'true' || vItem.hasTarget === undefined;
                   const achieved = hasTar ? (vItem.achieved !== undefined ? vItem.achieved : '') : '';
                   const status = !hasTar ? (vItem.status || 'Not Done') : '';
+                  const desc = (vItem.description || '').trim();
+                  const title = rawTitle || (desc ? desc.split('\n')[0].substring(0, 100) : '');
 
-                  if (title !== '') {
+                  if (title !== '' || desc !== '') {
                     tData.list.push({
-                      title,
+                      title: title || 'Voluntary Item',
                       time,
                       hasTarget: hasTar,
                       target: '',
+                      description: desc,
                       achieved,
                       status,
                       checklist: [],

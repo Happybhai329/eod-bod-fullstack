@@ -36,7 +36,7 @@ function hasEod(r) {
   }
 }
 
-export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenKraSop, onOpenDetail }) {
+export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenKraSop, onOpenDetail, refreshTrigger }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ average: 0, reports: [], fines: [] });
   const [todayStatus, setTodayStatus] = useState({ bodFilled: false, eodFilled: false });
@@ -57,7 +57,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
 
   useEffect(() => {
     fetchFormAndDashboard();
-  }, [user.id, filter]);
+  }, [user.id, filter, refreshTrigger]);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);

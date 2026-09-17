@@ -448,9 +448,25 @@ app.post('/api/employee/:id/report', async (req, res) => {
         }
 
         // Preserve bod_submitted_at - never reset it on edits
+        let sysScore = existing.system_score;
+        let finalScore = existing.final_score;
+        if (existing.eod_data) {
+          let eodObj = null;
+          try {
+            eodObj = typeof existing.eod_data === 'object' ? existing.eod_data : JSON.parse(existing.eod_data);
+          } catch (e) {}
+          if (eodObj && Object.keys(eodObj).length > 0) {
+            sysScore = calculatePerformance(phaseData, eodObj);
+            finalScore = sysScore;
+            if (existing.head_rating !== null && existing.head_rating !== undefined && existing.head_rating !== '' && existing.head_rating !== 'Auto') {
+              finalScore = calculateFinalScore(sysScore, existing.head_rating);
+            }
+          }
+        }
+
         await run(
-          `UPDATE daily_reports SET bod_data = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
-          [safePhaseJSON, now.toISOString(), now.toISOString(), existing.id]
+          `UPDATE daily_reports SET bod_data = ?, system_score = ?, final_score = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
+          [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id]
         );
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       } else {
