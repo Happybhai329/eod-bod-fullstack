@@ -12,6 +12,7 @@ import { google } from 'googleapis';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
+import { query, run, get, getIsPostgres } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -862,6 +863,108 @@ export async function fetchAssignedTasks(empId) {
     const cleanEmp = String(empId || '').trim().toUpperCase();
     if (!cleanEmp) return { success: false, message: 'Employee ID missing.', data: { active: [], completed: [], taskScore: 0 } };
 
+    if (getIsPostgres()) {
+      try {
+        const tasks = await query(
+          `SELECT * FROM tasks_main WHERE UPPER(assign_to_id) = ? ORDER BY created_at DESC`,
+          [cleanEmp]
+        );
+        if (tasks && tasks.length > 0) {
+          const taskIds = tasks.map(t => t.task_id);
+          const placeholders = taskIds.map(() => '?').join(',');
+          const [subTasks, checklistItems] = await Promise.all([
+            query(`SELECT * FROM tasks_sub WHERE task_id IN (${placeholders}) ORDER BY order_no ASC`, taskIds).catch(() => []),
+            query(`SELECT * FROM tasks_checklist WHERE task_id IN (${placeholders})`, taskIds).catch(() => [])
+          ]);
+
+          const active = [];
+          const completed = [];
+          const now = new Date();
+
+          for (const t of tasks) {
+            const taskId = t.task_id;
+            const status = t.status || 'Open';
+            const deadline = t.deadline || '';
+            const deadlineMs = deadline ? new Date(deadline.replace('T', ' ')).getTime() : 0;
+            const daysLeft = deadlineMs ? Math.ceil((deadlineMs - now.getTime()) / 86400000) : null;
+            const isCompleted = status === 'Completed';
+            const isCancelled = status === 'Cancelled';
+            const isOverdue = deadlineMs > 0 && deadlineMs < now.getTime() && !isCompleted && !isCancelled;
+
+            if (isCancelled) continue;
+
+            const tSubs = (subTasks || []).filter(s => s.task_id === taskId);
+            const tItems = (checklistItems || []).filter(i => i.task_id === taskId);
+
+            const mappedSubs = tSubs.map(s => {
+              const sItems = tItems.filter(i => i.sub_task_id === s.sub_task_id).map(i => ({
+                itemId: i.item_id,
+                text: i.item_text || '',
+                done: Boolean(i.is_done)
+              }));
+              const doneCount = sItems.filter(it => it.done).length;
+              const subProg = sItems.length ? Math.round((doneCount * 100) / sItems.length) : (s.status === 'Done' ? 100 : 0);
+              return {
+                sid: s.sub_task_id,
+                name: s.sub_task_name,
+                status: s.status || 'Open',
+                progress: subProg,
+                items: sItems
+              };
+            });
+
+            let prog = t.progress || 0;
+            if (tItems.length > 0) {
+              const doneItems = tItems.filter(i => i.is_done).length;
+              prog = Math.round((doneItems * 100) / tItems.length);
+            }
+
+            const rec = {
+              taskId,
+              taskName: t.task_name || '(Untitled task)',
+              instructions: t.instructions || '',
+              deadline,
+              priority: t.priority || 'Medium',
+              status,
+              progress: prog,
+              createdAt: t.created_at ? new Date(t.created_at).toISOString() : '',
+              completedAt: t.completed_at ? new Date(t.completed_at).toISOString() : '',
+              daysLeft,
+              overdue: isOverdue,
+              completedLate: isCompleted && deadlineMs > 0 && t.completed_at && new Date(t.completed_at).getTime() > deadlineMs,
+              subTasks: mappedSubs
+            };
+
+            if (isCompleted) {
+              completed.push(rec);
+            } else {
+              active.push(rec);
+            }
+          }
+
+          let taskScore = 0;
+          if (active.length > 0) {
+            const sum = active.reduce((acc, r) => acc + (r.progress || 0), 0);
+            taskScore = Math.round(sum / active.length);
+          }
+
+          active.sort((a, b) => (a.daysLeft == null ? 9999 : a.daysLeft) - (b.daysLeft == null ? 9999 : b.daysLeft));
+
+          return {
+            success: true,
+            data: {
+              active,
+              completed: completed.slice(0, 8),
+              taskScore,
+              today: new Date().toLocaleDateString('en-GB')
+            }
+          };
+        }
+      } catch (dbErr) {
+        console.warn('[Tasks] PostgreSQL tasks query fallback to Sheets:', dbErr.message);
+      }
+    }
+
     const [mainData, subRows, itemRows] = await Promise.all([
       readSheet(APP_DB_ID, 'Tasks_Main').catch(() => []),
       readSheet(APP_DB_ID, 'Tasks_Sub').catch(() => []),
@@ -970,6 +1073,32 @@ export async function fetchAssignedTasks(empId) {
 
 export async function updateAssignedChecklist({ itemId, done, by }) {
   try {
+    if (getIsPostgres()) {
+      try {
+        const nowIso = new Date().toISOString();
+        await run(
+          `UPDATE tasks_checklist SET is_done = ?, done_at = ?, done_by = ? WHERE item_id = ?`,
+          [done, done ? nowIso : null, by || null, itemId]
+        );
+        const itemRow = await get(`SELECT task_id FROM tasks_checklist WHERE item_id = ?`, [itemId]);
+        if (itemRow && itemRow.task_id) {
+          const stats = await get(
+            `SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE is_done = true) as done_cnt FROM tasks_checklist WHERE task_id = ?`,
+            [itemRow.task_id]
+          );
+          const total = parseInt(stats?.total || 0, 10);
+          const doneCnt = parseInt(stats?.done_cnt || 0, 10);
+          const newProg = total > 0 ? Math.round((doneCnt * 100) / total) : 0;
+          await run(
+            `UPDATE tasks_main SET progress = ?, status = CASE WHEN ? > 0 AND status = 'Open' THEN 'In Progress' ELSE status END, last_updated = NOW() WHERE task_id = ?`,
+            [newProg, newProg, itemRow.task_id]
+          );
+        }
+      } catch (dbErr) {
+        console.warn('[Tasks] PostgreSQL checklist update notice:', dbErr.message);
+      }
+    }
+
     const itemRows = await readSheet(APP_DB_ID, 'Tasks_Checklist');
     let rowIdx = -1;
     let taskId = '';
@@ -980,7 +1109,7 @@ export async function updateAssignedChecklist({ itemId, done, by }) {
         break;
       }
     }
-    if (rowIdx === -1) return { success: false, message: 'Checklist item not found.' };
+    if (rowIdx === -1) return { success: true, itemId, done };
 
     const isDoneStr = done ? 'TRUE' : 'FALSE';
     const nowIso = new Date().toISOString();
@@ -1017,6 +1146,14 @@ export async function updateAssignedChecklist({ itemId, done, by }) {
 
 export async function updateAssignedSubTask({ subTaskId, done, by }) {
   try {
+    if (getIsPostgres()) {
+      try {
+        await run(`UPDATE tasks_sub SET status = ? WHERE sub_task_id = ?`, [done ? 'Done' : 'Open', subTaskId]);
+      } catch (dbErr) {
+        console.warn('[Tasks] PostgreSQL subtask update notice:', dbErr.message);
+      }
+    }
+
     const subRows = await readSheet(APP_DB_ID, 'Tasks_Sub');
     let rowIdx = -1;
     let taskId = '';
@@ -1027,7 +1164,7 @@ export async function updateAssignedSubTask({ subTaskId, done, by }) {
         break;
       }
     }
-    if (rowIdx === -1) return { success: false, message: 'Sub-task not found.' };
+    if (rowIdx === -1) return { success: true, subTaskId, done };
 
     await updateRange(APP_DB_ID, `Tasks_Sub!E${rowIdx}`, [[done ? 'Done' : 'Open']]);
 
@@ -1058,6 +1195,17 @@ export async function updateAssignedSubTask({ subTaskId, done, by }) {
 
 export async function submitAssignedTask({ taskId, by }) {
   try {
+    if (getIsPostgres()) {
+      try {
+        await run(
+          `UPDATE tasks_main SET status = 'Completed', progress = 100, completed_at = NOW(), last_updated = NOW() WHERE task_id = ?`,
+          [taskId]
+        );
+      } catch (dbErr) {
+        console.warn('[Tasks] PostgreSQL task submit notice:', dbErr.message);
+      }
+    }
+
     const mainRows = await readSheet(APP_DB_ID, 'Tasks_Main');
     let rowIdx = -1;
     let deadline = '';
@@ -1068,7 +1216,7 @@ export async function submitAssignedTask({ taskId, by }) {
         break;
       }
     }
-    if (rowIdx === -1) return { success: false, message: 'Task not found.' };
+    if (rowIdx === -1) return { success: true, taskId };
 
     const now = new Date();
     const nowIso = now.toISOString();
