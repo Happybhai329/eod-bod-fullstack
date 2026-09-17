@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { initDatabase, query, run, get } from './db.js';
+import { initDatabase, query, run, get, getIsPostgres } from './db.js';
 import {
   syncDailyReportToSheets,
   syncFineToSheets,
@@ -300,7 +300,11 @@ app.get('/api/employee/:id/form', async (req, res) => {
     }
 
     const todayStr = getTodayString();
-    const todayReport = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [todayStr, empId]);
+    const effectiveId = emp.emp_id || emp.id;
+    const todayReport = await get(
+      `SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`,
+      [todayStr, emp.id, effectiveId]
+    );
 
     let todayStatus = {
       bodFilled: false,
@@ -315,21 +319,23 @@ app.get('/api/employee/:id/form', async (req, res) => {
     let eodDataObj = null;
 
     if (todayReport) {
-      if (todayReport.bod_data) {
-        if (typeof todayReport.bod_data === 'object') {
-          bodDataObj = todayReport.bod_data;
+      const rawBod = todayReport.bod_data || todayReport.bodData;
+      if (rawBod) {
+        if (typeof rawBod === 'object') {
+          bodDataObj = rawBod;
         } else {
-          try { bodDataObj = JSON.parse(todayReport.bod_data); } catch (e) {}
+          try { bodDataObj = JSON.parse(rawBod); } catch (e) {}
         }
         if (bodDataObj && typeof bodDataObj === 'object' && Object.keys(bodDataObj).length > 0) {
           todayStatus.bodFilled = true;
         }
       }
-      if (todayReport.eod_data) {
-        if (typeof todayReport.eod_data === 'object') {
-          eodDataObj = todayReport.eod_data;
+      const rawEod = todayReport.eod_data || todayReport.eodData;
+      if (rawEod) {
+        if (typeof rawEod === 'object') {
+          eodDataObj = rawEod;
         } else {
-          try { eodDataObj = JSON.parse(todayReport.eod_data); } catch (e) {}
+          try { eodDataObj = JSON.parse(rawEod); } catch (e) {}
         }
         if (eodDataObj && typeof eodDataObj === 'object' && Object.keys(eodDataObj).length > 0) {
           todayStatus.eodFilled = true;
@@ -416,10 +422,17 @@ app.post('/api/employee/:id/report', async (req, res) => {
     let savedReport = null;
     if (!existing) {
       if (phase === 'BOD') {
-        await run(
-          `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?, ?)`,
-          [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString(), now.toISOString()]
-        );
+        if (getIsPostgres()) {
+          await run(
+            `INSERT INTO daily_reports (date, employee_id, department, bod_data, "bodData", last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)`,
+            [todayStr, effectiveId, emp.department, safePhaseJSON, safePhaseJSON, now.toISOString(), now.toISOString()]
+          );
+        } else {
+          await run(
+            `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?, ?)`,
+            [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString(), now.toISOString()]
+          );
+        }
       } else {
         // EOD cannot be submitted without a pre-existing BOD submission
         return res.status(400).json({
@@ -464,10 +477,17 @@ app.post('/api/employee/:id/report', async (req, res) => {
           }
         }
 
-        await run(
-          `UPDATE daily_reports SET bod_data = ?, system_score = ?, final_score = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
-          [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id]
-        );
+        if (getIsPostgres()) {
+          await run(
+            `UPDATE daily_reports SET bod_data = ?, "bodData" = ?::jsonb, system_score = ?, final_score = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
+            [safePhaseJSON, safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id]
+          );
+        } else {
+          await run(
+            `UPDATE daily_reports SET bod_data = ?, system_score = ?, final_score = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
+            [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id]
+          );
+        }
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       } else {
         // Enforce that BOD exists and is not empty before allowing EOD submission
@@ -505,10 +525,17 @@ app.post('/api/employee/:id/report', async (req, res) => {
         }
 
         const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
-        await run(
-          `UPDATE daily_reports SET eod_data = ?, system_score = ?, final_score = ?, last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
-          [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id]
-        );
+        if (getIsPostgres()) {
+          await run(
+            `UPDATE daily_reports SET eod_data = ?, "eodData" = ?::jsonb, system_score = ?, final_score = ?, last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
+            [safePhaseJSON, safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id]
+          );
+        } else {
+          await run(
+            `UPDATE daily_reports SET eod_data = ?, system_score = ?, final_score = ?, last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
+            [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id]
+          );
+        }
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
       }
     }
@@ -530,10 +557,18 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
   try {
     await checkAutoApprovals();
     const empId = req.params.id;
+    const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
+    const effectiveId = emp ? (emp.emp_id || emp.id) : empId;
     const { filter = 'Weekly' } = req.query;
 
-    const allReports = await query(`SELECT * FROM daily_reports WHERE employee_id = ?`, [empId]);
-    const fines = await query(`SELECT * FROM fines WHERE employee_id = ? ORDER BY id DESC`, [empId]);
+    const allReports = await query(
+      `SELECT * FROM daily_reports WHERE (employee_id = ? OR employee_id = ?)`,
+      [empId, effectiveId]
+    );
+    const fines = await query(
+      `SELECT * FROM fines WHERE (employee_id = ? OR employee_id = ?) ORDER BY id DESC`,
+      [empId, effectiveId]
+    );
 
     // Sort descending by date (latest date first)
     allReports.sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));

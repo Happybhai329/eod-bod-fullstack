@@ -384,6 +384,191 @@ export async function initDatabase() {
       DO $$ BEGIN
         ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS eod_submitted_at TEXT;
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      CREATE OR REPLACE FUNCTION sync_daily_reports_columns()
+      RETURNS TRIGGER AS $trg$
+      DECLARE
+          d_str TEXT;
+          parts TEXT[];
+          epoch_ms BIGINT;
+          today_epoch_ms BIGINT;
+          has_eod BOOLEAN;
+          is_past_day BOOLEAN := false;
+      BEGIN
+          d_str := COALESCE(NULLIF(NEW."reportDate", ''), NULLIF(NEW.date, ''));
+          NEW."reportDate" := d_str;
+          NEW.date := d_str;
+
+          IF d_str IS NOT NULL AND d_str LIKE '%/%/%' THEN
+              parts := string_to_array(d_str, '/');
+              IF array_length(parts, 1) = 3 THEN
+                  BEGIN
+                      epoch_ms := (EXTRACT(EPOCH FROM to_timestamp(parts[3] || '-' || parts[2] || '-' || parts[1], 'YYYY-MM-DD')) * 1000)::BIGINT;
+                      NEW."dateTimestamp" := epoch_ms;
+                      
+                      today_epoch_ms := (EXTRACT(EPOCH FROM (NOW() AT TIME ZONE 'Asia/Kolkata')::date) * 1000)::BIGINT;
+                      IF epoch_ms < today_epoch_ms THEN
+                          is_past_day := true;
+                      END IF;
+                  EXCEPTION WHEN OTHERS THEN
+                      NULL;
+                  END;
+              END IF;
+          END IF;
+
+          NEW."employeeId" := COALESCE(NULLIF(NEW."employeeId", ''), NULLIF(NEW.employee_id, ''));
+          NEW.employee_id := COALESCE(NULLIF(NEW.employee_id, ''), NULLIF(NEW."employeeId", ''));
+
+          NEW."departmentName" := COALESCE(NULLIF(NEW."departmentName", ''), NULLIF(NEW.department, ''));
+          NEW.department := COALESCE(NULLIF(NEW.department, ''), NULLIF(NEW."departmentName", ''));
+
+          -- BOD conversion: properly detect which column changed on UPDATE
+          IF TG_OP = 'UPDATE' THEN
+              IF NEW.bod_data IS DISTINCT FROM OLD.bod_data AND NEW."bodData" IS NOT DISTINCT FROM OLD."bodData" THEN
+                  IF NEW.bod_data IS NOT NULL AND NEW.bod_data != '' AND NEW.bod_data != '{}' THEN
+                      BEGIN
+                          NEW."bodData" := NEW.bod_data::jsonb;
+                      EXCEPTION WHEN OTHERS THEN
+                          NEW."bodData" := '{}'::jsonb;
+                      END;
+                  ELSE
+                      NEW."bodData" := '{}'::jsonb;
+                      NEW.bod_data := '';
+                  END IF;
+              ELSIF NEW."bodData" IS DISTINCT FROM OLD."bodData" AND NEW.bod_data IS NOT DISTINCT FROM OLD.bod_data THEN
+                  IF NEW."bodData" IS NOT NULL AND NEW."bodData"::text != '{}' AND NEW."bodData"::text != 'null' THEN
+                      NEW.bod_data := NEW."bodData"::text;
+                  ELSE
+                      NEW."bodData" := '{}'::jsonb;
+                      NEW.bod_data := '';
+                  END IF;
+              ELSE
+                  IF NEW.bod_data IS NOT NULL AND NEW.bod_data != '' AND NEW.bod_data != '{}' THEN
+                      BEGIN
+                          NEW."bodData" := NEW.bod_data::jsonb;
+                      EXCEPTION WHEN OTHERS THEN
+                          NEW."bodData" := '{}'::jsonb;
+                      END;
+                  ELSIF NEW."bodData" IS NOT NULL AND NEW."bodData"::text != '{}' AND NEW."bodData"::text != 'null' THEN
+                      NEW.bod_data := NEW."bodData"::text;
+                  ELSE
+                      NEW."bodData" := '{}'::jsonb;
+                      NEW.bod_data := '';
+                  END IF;
+              END IF;
+          ELSE
+              -- INSERT
+              IF NEW.bod_data IS NOT NULL AND NEW.bod_data != '' AND NEW.bod_data != '{}' THEN
+                  BEGIN
+                      NEW."bodData" := NEW.bod_data::jsonb;
+                  EXCEPTION WHEN OTHERS THEN
+                      NEW."bodData" := '{}'::jsonb;
+                  END;
+              ELSIF NEW."bodData" IS NOT NULL AND NEW."bodData"::text != '{}' AND NEW."bodData"::text != 'null' THEN
+                  NEW.bod_data := NEW."bodData"::text;
+              ELSE
+                  NEW."bodData" := '{}'::jsonb;
+                  NEW.bod_data := '';
+              END IF;
+          END IF;
+
+          -- EOD conversion: properly detect which column changed on UPDATE
+          IF TG_OP = 'UPDATE' THEN
+              IF NEW.eod_data IS DISTINCT FROM OLD.eod_data AND NEW."eodData" IS NOT DISTINCT FROM OLD."eodData" THEN
+                  IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' THEN
+                      BEGIN
+                          NEW."eodData" := NEW.eod_data::jsonb;
+                      EXCEPTION WHEN OTHERS THEN
+                          NEW."eodData" := '{}'::jsonb;
+                      END;
+                  ELSE
+                      NEW."eodData" := '{}'::jsonb;
+                      NEW.eod_data := '';
+                  END IF;
+              ELSIF NEW."eodData" IS DISTINCT FROM OLD."eodData" AND NEW.eod_data IS NOT DISTINCT FROM OLD.eod_data THEN
+                  IF NEW."eodData" IS NOT NULL AND NEW."eodData"::text != '{}' AND NEW."eodData"::text != 'null' THEN
+                      NEW.eod_data := NEW."eodData"::text;
+                  ELSE
+                      NEW."eodData" := '{}'::jsonb;
+                      NEW.eod_data := '';
+                  END IF;
+              ELSE
+                  IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' THEN
+                      BEGIN
+                          NEW."eodData" := NEW.eod_data::jsonb;
+                      EXCEPTION WHEN OTHERS THEN
+                          NEW."eodData" := '{}'::jsonb;
+                      END;
+                  ELSIF NEW."eodData" IS NOT NULL AND NEW."eodData"::text != '{}' AND NEW."eodData"::text != 'null' THEN
+                      NEW.eod_data := NEW."eodData"::text;
+                  ELSE
+                      NEW."eodData" := '{}'::jsonb;
+                      NEW.eod_data := '';
+                  END IF;
+              END IF;
+          ELSE
+              -- INSERT
+              IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' THEN
+                  BEGIN
+                      NEW."eodData" := NEW.eod_data::jsonb;
+                  EXCEPTION WHEN OTHERS THEN
+                      NEW."eodData" := '{}'::jsonb;
+                  END;
+              ELSIF NEW."eodData" IS NOT NULL AND NEW."eodData"::text != '{}' AND NEW."eodData"::text != 'null' THEN
+                  NEW.eod_data := NEW."eodData"::text;
+              ELSE
+                  NEW."eodData" := '{}'::jsonb;
+                  NEW.eod_data := '';
+              END IF;
+          END IF;
+
+          has_eod := (NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' AND NEW.eod_data != 'null');
+
+          IF NOT has_eod THEN
+              NEW."systemScore" := NULL;
+              NEW.system_score := NULL;
+              NEW."finalScore" := NULL;
+              NEW.final_score := NULL;
+              IF is_past_day THEN
+                  NEW.approval_status := 'EOD Missed';
+              ELSE
+                  NEW.approval_status := 'Pending EOD';
+              END IF;
+          ELSE
+              NEW."systemScore" := COALESCE(NEW."systemScore", NEW.system_score);
+              NEW.system_score := COALESCE(NEW.system_score, NEW."systemScore");
+
+              IF NEW."systemScore" >= 1000 THEN
+                  NEW."systemScore" := ROUND(NEW."systemScore" / 100);
+                  NEW.system_score := NEW."systemScore";
+              END IF;
+
+              NEW."finalScore" := COALESCE(NEW."finalScore", NEW.final_score, NEW."systemScore");
+              NEW.final_score := COALESCE(NEW.final_score, NEW."finalScore", NEW.system_score);
+
+              IF NEW."finalScore" >= 1000 THEN
+                  NEW."finalScore" := ROUND(NEW."finalScore" / 100);
+                  NEW.final_score := NEW."finalScore";
+              END IF;
+
+              IF NEW.approval_status IN ('EOD Missed', 'Pending EOD') OR NEW.approval_status IS NULL THEN
+                  NEW.approval_status := 'Pending Review';
+              END IF;
+          END IF;
+
+          NEW."lastUpdated" := COALESCE(NEW."lastUpdated", NOW());
+
+          RETURN NEW;
+      END;
+      $trg$ LANGUAGE plpgsql;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sync_daily_reports_columns') THEN
+          CREATE TRIGGER trg_sync_daily_reports_columns
+          BEFORE INSERT OR UPDATE ON daily_reports
+          FOR EACH ROW EXECUTE FUNCTION sync_daily_reports_columns();
+        END IF;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
     `);
   } else {
     try {
