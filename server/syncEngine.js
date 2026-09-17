@@ -77,8 +77,8 @@ export async function syncInbound() {
   // ============ A. Employees (Inbound Only — Sheets is master) ============
   try {
     const employees = await fetchRealEmployees();
-    for (let i = 0; i < employees.length; i += 15) {
-      const chunk = employees.slice(i, i + 15);
+    for (let i = 0; i < employees.length; i += 6) {
+      const chunk = employees.slice(i, i + 6);
       await Promise.all(chunk.map(async (e) => {
         try {
           if (isPg) {

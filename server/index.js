@@ -88,6 +88,37 @@ function parseDateToMs(dStr) {
   return isNaN(d.getTime()) ? 0 : d.getTime();
 }
 
+function parseTimestampToMs(val) {
+  if (!val) return 0;
+  if (val instanceof Date) return isNaN(val.getTime()) ? 0 : val.getTime();
+  if (typeof val === 'number') return val;
+  const s = String(val).trim();
+  if (!s) return 0;
+  if (/^\d{10,13}$/.test(s)) return parseInt(s, 10);
+
+  // Match DD/MM/YYYY HH:mm:ss with optional AM/PM (e.g. from Google Sheets or code.gs)
+  const ddmmyyyyTime = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?(?:\s*(AM|PM))?/i);
+  if (ddmmyyyyTime) {
+    const day = ddmmyyyyTime[1].padStart(2, '0');
+    const month = ddmmyyyyTime[2].padStart(2, '0');
+    const year = ddmmyyyyTime[3];
+    let hours = ddmmyyyyTime[4] ? parseInt(ddmmyyyyTime[4], 10) : 0;
+    const minutes = ddmmyyyyTime[5] ? ddmmyyyyTime[5].padStart(2, '0') : '00';
+    const seconds = ddmmyyyyTime[6] ? ddmmyyyyTime[6].padStart(2, '0') : '00';
+    const ampm = ddmmyyyyTime[7]?.toUpperCase();
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+    const hrsStr = String(hours).padStart(2, '0');
+    // Parse as India Standard Time (+05:30)
+    const isoString = `${year}-${month}-${day}T${hrsStr}:${minutes}:${seconds}+05:30`;
+    const d = new Date(isoString);
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+
+  const parsed = new Date(s);
+  return isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+}
+
 function hasValidEod(r) {
   if (!r || !r.eod_data) return false;
   try {
@@ -285,25 +316,37 @@ app.get('/api/employee/:id/form', async (req, res) => {
 
     if (todayReport) {
       if (todayReport.bod_data) {
-        todayStatus.bodFilled = true;
         if (typeof todayReport.bod_data === 'object') {
           bodDataObj = todayReport.bod_data;
         } else {
           try { bodDataObj = JSON.parse(todayReport.bod_data); } catch (e) {}
         }
+        if (bodDataObj && typeof bodDataObj === 'object' && Object.keys(bodDataObj).length > 0) {
+          todayStatus.bodFilled = true;
+        }
       }
       if (todayReport.eod_data) {
-        todayStatus.eodFilled = true;
         if (typeof todayReport.eod_data === 'object') {
           eodDataObj = todayReport.eod_data;
         } else {
           try { eodDataObj = JSON.parse(todayReport.eod_data); } catch (e) {}
         }
+        if (eodDataObj && typeof eodDataObj === 'object' && Object.keys(eodDataObj).length > 0) {
+          todayStatus.eodFilled = true;
+        }
       }
 
-      if (todayReport.last_updated && todayReport.approval_status !== 'Approved' && todayReport.approval_status !== 'Auto Approved') {
-        const lastEditTime = new Date(todayReport.last_updated).getTime();
-        const now = new Date().getTime();
+      if (todayReport.approval_status !== 'Approved' && todayReport.approval_status !== 'Auto Approved') {
+        const rawLastUpdated = todayReport.last_updated || todayReport.lastUpdated;
+        let lastEditTime = parseTimestampToMs(rawLastUpdated);
+        const now = Date.now();
+
+        // Fallback: If lastEditTime is still 0 or unparseable, but report is for today, use creation timestamp or now
+        if (!lastEditTime || lastEditTime <= 0) {
+          const createdAtMs = parseTimestampToMs(todayReport.createdAt || todayReport.created_at);
+          lastEditTime = createdAtMs > 0 ? createdAtMs : now;
+        }
+
         if (todayStatus.eodFilled) {
           const remaining = lastEditTime + EOD_EDIT_WINDOW_MS - now;
           if (remaining > 0) {
