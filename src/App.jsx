@@ -228,16 +228,18 @@ export default function App() {
 
       {/* Modals */}
       <ErrorBoundary title="Report Form Error" onReset={() => setIsFormOpen(false)}>
-        <BodEodFormModal
-          isOpen={isFormOpen}
-          onClose={() => setIsFormOpen(false)}
-          phase={formPhase}
-          config={formConfig}
-          initialBodData={formBodData}
-          initialEodData={formEodData}
-          onSave={handleSaveReport}
-          user={user}
-        />
+        {isFormOpen && (
+          <BodEodFormModal
+            isOpen={isFormOpen}
+            onClose={() => setIsFormOpen(false)}
+            phase={formPhase}
+            config={formConfig}
+            initialBodData={formBodData}
+            initialEodData={formEodData}
+            onSave={handleSaveReport}
+            user={user}
+          />
+        )}
       </ErrorBoundary>
 
       <TaskConfigModal

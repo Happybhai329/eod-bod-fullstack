@@ -16,6 +16,16 @@ function escapeHtml(str) {
 }
 
 /**
+ * Safely converts any value to a renderable string for React JSX.
+ * Prevents React error #310 "Objects are not valid as a React child".
+ */
+function safeStr(val) {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return val;
+  try { return JSON.stringify(val); } catch(e) { return String(val); }
+}
+
+/**
  * Normalizes task configurations from either Google Sheets (taskName/inputType)
  * or standard schema (key/label/type).
  */
@@ -317,8 +327,6 @@ export default function BodEodFormModal({
     setVoluntaryOpenMap(initialVolMap);
   }, [isOpen, phase, visibleTasks, initialBodData, initialEodData]);
 
-  if (!isOpen) return null;
-
   // ==========================================
   // HANDLERS FOR DYNAMIC LIST
   // ==========================================
@@ -528,7 +536,7 @@ export default function BodEodFormModal({
   // REAL-TIME SYSTEM SCORE ESTIMATION (EOD) - MEMOIZED
   // ==========================================
   const liveScore = useMemo(() => {
-    if (phase !== 'EOD' || visibleTasks.length === 0) return null;
+    if (!isOpen || phase !== 'EOD' || visibleTasks.length === 0) return null;
     const scores = [];
 
     visibleTasks.forEach(t => {
@@ -579,7 +587,7 @@ export default function BodEodFormModal({
     if (scores.length === 0) return 0;
     const total = scores.reduce((a, b) => a + b, 0);
     return Math.round(total / scores.length);
-  }, [phase, visibleTasks, formData, initialBodData, voluntaryOpenMap]);
+  }, [isOpen, phase, visibleTasks, formData, initialBodData, voluntaryOpenMap]);
 
   // ==========================================
   // SUBMIT REPORT HANDLER (Exact GS App Parity)
@@ -870,6 +878,8 @@ export default function BodEodFormModal({
     onClose();
   };
 
+  if (!isOpen) return null;
+
   return (
     <>
       {/* 1. MAIN BOD / EOD FORM MODAL */}
@@ -948,7 +958,7 @@ export default function BodEodFormModal({
                     {/* If EOD and has BOD Target */}
                     {phase === 'EOD' && bodSaved && t.inputType !== 'dynamicList' && (
                       <div className="mb-3 text-primary small">
-                        <strong>BOD Target:</strong> {bodSaved.value || 'N/A'}
+                        <strong>BOD Target:</strong> {typeof bodSaved.value === 'object' ? JSON.stringify(bodSaved.value) : (bodSaved.value || 'N/A')}
                       </div>
                     )}
 
@@ -1327,7 +1337,7 @@ export default function BodEodFormModal({
                               type={t.inputType === 'number' ? 'number' : 'text'}
                               className="form-control main-val border-primary"
                               placeholder="Enter details or number"
-                              value={taskState.value !== undefined ? taskState.value : ''}
+                              value={taskState.value !== undefined && taskState.value !== null ? (typeof taskState.value === 'object' ? JSON.stringify(taskState.value) : taskState.value) : ''}
                               onChange={(e) => updateNumberValue(taskName, e.target.value)}
                             />
                           </div>
