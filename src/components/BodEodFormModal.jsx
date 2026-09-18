@@ -490,9 +490,9 @@ export default function BodEodFormModal({
   };
 
   // ==========================================
-  // REAL-TIME SYSTEM SCORE ESTIMATION (EOD)
+  // REAL-TIME SYSTEM SCORE ESTIMATION (EOD) - MEMOIZED
   // ==========================================
-  const computeLiveScore = () => {
+  const liveScore = useMemo(() => {
     if (phase !== 'EOD' || visibleTasks.length === 0) return null;
     const scores = [];
 
@@ -544,9 +544,7 @@ export default function BodEodFormModal({
     if (scores.length === 0) return 0;
     const total = scores.reduce((a, b) => a + b, 0);
     return Math.round(total / scores.length);
-  };
-
-  const liveScore = computeLiveScore();
+  }, [phase, visibleTasks, formData, initialBodData, voluntaryOpenMap]);
 
   // ==========================================
   // SUBMIT REPORT HANDLER (Exact GS App Parity)
@@ -841,7 +839,7 @@ export default function BodEodFormModal({
     <>
       {/* 1. MAIN BOD / EOD FORM MODAL */}
       <div className="modal-overlay">
-        <div className="modal-content" style={{ maxWidth: '780px' }}>
+        <div className="modal-content form-modal-content">
           {/* Exact GS App Navy Header */}
           <div className="modal-header bg-navy text-white">
             <h5 className="modal-title fw-bold">
@@ -853,7 +851,7 @@ export default function BodEodFormModal({
           </div>
 
           <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-            <div className="modal-body bg-light" style={{ maxHeight: '75vh', overflowY: 'auto' }}>
+            <div className="modal-body form-modal-body bg-light">
               {error && (
                 <div style={{ padding: '10px', background: 'var(--danger-light)', color: 'var(--danger)', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
                   {error}
@@ -926,64 +924,80 @@ export default function BodEodFormModal({
                           <div className="dynamic-list-wrapper mt-3 border rounded p-3 bg-light">
                             {phase === 'BOD' ? (
                               <>
-                                <label className="form-label text-navy fw-bold">
+                                <label className="form-label text-navy fw-bold mb-2">
                                   List Items, Targets & Time
                                 </label>
                                 <div>
                                   {(taskState.list || []).map((item, idx) => (
-                                    <div className="row mt-2 align-items-start dyn-row border-bottom pb-2 mb-2" key={idx}>
-                                      <div className="col-12 mb-1 d-flex gap-2">
+                                    <div className="dyn-item-card" key={idx}>
+                                      <div className="dyn-item-header">
+                                        <span className="dyn-item-badge">#{idx + 1}</span>
+                                        <div className="dyn-item-header-controls">
+                                          <div className="dyn-time-wrapper">
+                                            <i className="bi bi-clock"></i>
+                                            <input
+                                              type="time"
+                                              className="dyn-time-input"
+                                              value={item.time || ''}
+                                              title="Optional Time"
+                                              onChange={(e) => updateDynItemBOD(taskName, idx, 'time', e.target.value)}
+                                            />
+                                          </div>
+                                          {(taskState.list || []).length > 1 && (
+                                            <button
+                                              type="button"
+                                              className="dyn-delete-btn"
+                                              onClick={() => removeDynItemBOD(taskName, idx)}
+                                              title="Delete item"
+                                            >
+                                              <i className="bi bi-x-lg"></i>
+                                            </button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      <div className="dyn-field-group">
+                                        <label className="dyn-field-label">Item Name / Task</label>
                                         <input
                                           type="text"
-                                          className="form-control form-control-sm dyn-title border-primary flex-grow-1"
+                                          className="form-control dyn-title-input"
                                           value={item.title || ''}
-                                          placeholder="Item Name / Task"
+                                          placeholder="Enter task title..."
                                           onChange={(e) => updateDynItemBOD(taskName, idx, 'title', e.target.value)}
                                         />
-                                        <input
-                                          type="time"
-                                          className="form-control form-control-sm dyn-time border-primary"
-                                          style={{ width: '110px' }}
-                                          value={item.time || ''}
-                                          title="Optional Time"
-                                          onChange={(e) => updateDynItemBOD(taskName, idx, 'time', e.target.value)}
-                                        />
-                                        {(taskState.list || []).length > 1 && (
-                                          <button
-                                            type="button"
-                                            className="btn btn-sm btn-danger fw-bold"
-                                            onClick={() => removeDynItemBOD(taskName, idx)}
-                                            title="Delete item"
-                                          >
-                                            X
-                                          </button>
-                                        )}
                                       </div>
-                                      <div className="col-12 d-flex gap-2">
-                                        <select
-                                          className="form-select form-select-sm dyn-has-target border-primary"
-                                          style={{ width: '140px' }}
-                                          value={item.hasTarget ? 'true' : 'false'}
-                                          onChange={(e) => updateDynItemBOD(taskName, idx, 'hasTarget', e.target.value === 'true')}
-                                        >
-                                          <option value="true">Number Target</option>
-                                          <option value="false">Yes/No Task</option>
-                                        </select>
-                                        <div className="dyn-val-container flex-grow-1">
-                                          {item.hasTarget && (
+
+                                      <div className="dyn-target-row">
+                                        <div className="dyn-target-type">
+                                          <label className="dyn-field-label">Target Mode</label>
+                                          <select
+                                            className="form-select dyn-select"
+                                            value={item.hasTarget ? 'true' : 'false'}
+                                            onChange={(e) => updateDynItemBOD(taskName, idx, 'hasTarget', e.target.value === 'true')}
+                                          >
+                                            <option value="true">Number Target</option>
+                                            <option value="false">Yes/No Task</option>
+                                          </select>
+                                        </div>
+                                        {item.hasTarget && (
+                                          <div className="dyn-target-val">
+                                            <label className="dyn-field-label">Target Count</label>
                                             <input
                                               type="number"
-                                              className="form-control form-control-sm dyn-target border-primary"
+                                              min="1"
+                                              className="form-control dyn-number-input"
                                               placeholder="Target"
                                               value={item.target !== undefined ? item.target : ''}
                                               onChange={(e) => updateDynItemBOD(taskName, idx, 'target', e.target.value)}
                                             />
-                                          )}
-                                        </div>
+                                          </div>
+                                        )}
                                       </div>
-                                      <div className="col-12 mt-1">
+
+                                      <div className="dyn-field-group mt-1">
+                                        <label className="dyn-field-label">Checklist Steps or Description (one per line)</label>
                                         <textarea
-                                          className="form-control form-control-sm dyn-desc border-primary"
+                                          className="form-control dyn-desc-textarea"
                                           rows="2"
                                           placeholder="Add checklist items (one per line) or general description..."
                                           value={item.description || ''}
@@ -1004,7 +1018,7 @@ export default function BodEodFormModal({
                             ) : (
                               /* EOD DYNAMIC LIST */
                               <>
-                                <label className="form-label text-navy fw-bold">
+                                <label className="form-label text-navy fw-bold mb-2">
                                   Update Morning Items (Checklists & Progress)
                                 </label>
                                 <div>
@@ -1014,15 +1028,12 @@ export default function BodEodFormModal({
                                       const descLines = (mItem.description || '').split('\n').filter(x => x.trim() !== '');
 
                                       return (
-                                        <div className="row mt-2 align-items-start dyn-row border-bottom pb-2 mb-2" data-is-bod="true" key={bIdx}>
-                                          <div className="col-12 mb-1 d-flex justify-content-between align-items-center">
-                                            <input
-                                              type="text"
-                                              className="form-control form-control-sm dyn-title fw-bold text-navy"
-                                              value={mItem.title || ''}
-                                              readOnly
-                                              style={{ background: 'transparent', border: 'none', paddingLeft: 0, fontSize: '1rem' }}
-                                            />
+                                        <div className="dyn-item-card eod-item-card" data-is-bod="true" key={bIdx}>
+                                          <div className="dyn-item-header">
+                                            <div className="d-flex align-items-center gap-2 flex-wrap">
+                                              <span className="dyn-item-badge eod-badge">#{bIdx + 1}</span>
+                                              <strong className="eod-item-title">{mItem.title || 'Morning Task'}</strong>
+                                            </div>
                                             {mItem.time && (
                                               <span className="badge bg-info text-dark shadow-sm">
                                                 <i className="bi bi-clock me-1"></i>{mItem.time}
@@ -1032,45 +1043,47 @@ export default function BodEodFormModal({
 
                                           {/* Checklist Items */}
                                           {descLines.length > 0 && (
-                                            <div className="col-12 mb-2 ps-3 border-start border-3 border-primary dyn-checklist">
-                                              {descLines.map((line, lIdx) => (
-                                                <div className="form-check mt-1" key={lIdx}>
-                                                  <input
-                                                    className="form-check-input chk-item border-primary"
-                                                    type="checkbox"
-                                                    id={`chk_${i}_${bIdx}_${lIdx}`}
-                                                    checked={Boolean(mItem.checklist?.[lIdx])}
-                                                    onChange={(e) => toggleChecklistEOD(taskName, bIdx, lIdx, e.target.checked)}
-                                                  />
-                                                  <label className="form-check-label text-secondary" htmlFor={`chk_${i}_${bIdx}_${lIdx}`}>
-                                                    {line}
+                                            <div className="dyn-checklist-box">
+                                              <div className="dyn-checklist-header">
+                                                <i className="bi bi-card-checklist me-1"></i> Morning Checklist:
+                                              </div>
+                                              {descLines.map((line, lIdx) => {
+                                                const isDone = Boolean(mItem.checklist?.[lIdx]);
+                                                return (
+                                                  <label className={`dyn-checklist-item ${isDone ? 'checked' : ''}`} key={lIdx}>
+                                                    <input
+                                                      className="form-check-input"
+                                                      type="checkbox"
+                                                      id={`chk_${i}_${bIdx}_${lIdx}`}
+                                                      checked={isDone}
+                                                      onChange={(e) => toggleChecklistEOD(taskName, bIdx, lIdx, e.target.checked)}
+                                                    />
+                                                    <span className="dyn-checklist-text">{line}</span>
                                                   </label>
-                                                </div>
-                                              ))}
+                                                );
+                                              })}
                                             </div>
                                           )}
 
-                                          <div className="col-12 d-flex gap-2 align-items-center mt-1">
-                                            <div style={{ width: '140px' }}>
-                                              <input
-                                                type="text"
-                                                className="form-control form-control-sm text-muted bg-light"
-                                                value={hasTar ? `Target: ${mItem.target || 1}` : 'Yes/No Task'}
-                                                readOnly
-                                              />
+                                          <div className="dyn-progress-row">
+                                            <div className="dyn-target-pill">
+                                              <span className="dyn-pill-label">Target Mode</span>
+                                              <strong className="dyn-pill-value">{hasTar ? `Target: ${mItem.target || 1}` : 'Yes/No Task'}</strong>
                                             </div>
-                                            <div className="dyn-val-container flex-grow-1">
+                                            <div className="dyn-achieved-box">
+                                              <label className="dyn-field-label">{hasTar ? 'Achieved Score' : 'Status'}</label>
                                               {hasTar ? (
                                                 <input
                                                   type="number"
-                                                  className="form-control form-control-sm dyn-achieved border-success"
+                                                  min="0"
+                                                  className="form-control dyn-achieved-input"
                                                   placeholder="Achieved Score"
                                                   value={mItem.achieved !== undefined ? mItem.achieved : ''}
                                                   onChange={(e) => updateMorningFieldEOD(taskName, bIdx, 'achieved', e.target.value)}
                                                 />
                                               ) : (
                                                 <select
-                                                  className="form-select form-select-sm dyn-status border-success"
+                                                  className="form-select dyn-status-select"
                                                   value={mItem.status || 'Not Done'}
                                                   onChange={(e) => updateMorningFieldEOD(taskName, bIdx, 'status', e.target.value)}
                                                 >
@@ -1090,7 +1103,7 @@ export default function BodEodFormModal({
 
                                 {/* Voluntary Extra Items Section */}
                                 <div className="mt-4 pt-3 border-top border-secondary">
-                                  <label className="form-label text-navy fw-bold d-block">
+                                  <label className="form-label text-navy fw-bold d-block mb-2">
                                     Add Extra/Voluntary Items?
                                   </label>
                                   <div className="form-check form-check-inline">
@@ -1103,7 +1116,7 @@ export default function BodEodFormModal({
                                       checked={hasVol}
                                       onChange={() => setVoluntaryToggle(taskName, true)}
                                     />
-                                    <label className="form-check-label text-success" htmlFor={`vol_yes_${i}`}>
+                                    <label className="form-check-label text-success fw-bold" htmlFor={`vol_yes_${i}`}>
                                       Yes
                                     </label>
                                   </div>
@@ -1117,7 +1130,7 @@ export default function BodEodFormModal({
                                       checked={!hasVol}
                                       onChange={() => setVoluntaryToggle(taskName, false)}
                                     />
-                                    <label className="form-check-label text-danger" htmlFor={`vol_no_${i}`}>
+                                    <label className="form-check-label text-danger fw-bold" htmlFor={`vol_no_${i}`}>
                                       No
                                     </label>
                                   </div>
@@ -1126,53 +1139,68 @@ export default function BodEodFormModal({
                                     <div className="mt-2">
                                       <div>
                                         {(taskState.volItems || []).map((vItem, vIdx) => (
-                                          <div className="row mt-2 align-items-start dyn-row border-bottom pb-2 mb-2" key={vIdx}>
-                                            <div className="col-12 mb-1 d-flex gap-2">
+                                          <div className="dyn-item-card vol-item-card" key={vIdx}>
+                                            <div className="dyn-item-header">
+                                              <span className="dyn-item-badge vol-badge">Extra #{vIdx + 1}</span>
+                                              <div className="dyn-item-header-controls">
+                                                <div className="dyn-time-wrapper">
+                                                  <i className="bi bi-clock"></i>
+                                                  <input
+                                                    type="time"
+                                                    className="dyn-time-input"
+                                                    title="Optional Time"
+                                                    value={vItem.time || ''}
+                                                    onChange={(e) => updateVolItemEOD(taskName, vIdx, 'time', e.target.value)}
+                                                  />
+                                                </div>
+                                                <button
+                                                  type="button"
+                                                  className="dyn-delete-btn"
+                                                  onClick={() => removeVolItemEOD(taskName, vIdx)}
+                                                  title="Delete extra item"
+                                                >
+                                                  <i className="bi bi-x-lg"></i>
+                                                </button>
+                                              </div>
+                                            </div>
+
+                                            <div className="dyn-field-group">
+                                              <label className="dyn-field-label">Voluntary Item Description</label>
                                               <input
                                                 type="text"
-                                                className="form-control form-control-sm dyn-title border-success flex-grow-1"
-                                                placeholder="Voluntary Item"
+                                                className="form-control dyn-title-input"
+                                                placeholder="e.g. Completed extra audit tasks"
                                                 value={vItem.title || ''}
                                                 onChange={(e) => updateVolItemEOD(taskName, vIdx, 'title', e.target.value)}
                                               />
-                                              <input
-                                                type="time"
-                                                className="form-control form-control-sm dyn-time border-success"
-                                                style={{ width: '110px' }}
-                                                title="Optional Time"
-                                                value={vItem.time || ''}
-                                                onChange={(e) => updateVolItemEOD(taskName, vIdx, 'time', e.target.value)}
-                                              />
-                                              <button
-                                                type="button"
-                                                className="btn btn-sm btn-danger fw-bold"
-                                                onClick={() => removeVolItemEOD(taskName, vIdx)}
-                                              >
-                                                X
-                                              </button>
                                             </div>
-                                            <div className="col-12 d-flex gap-2">
-                                              <select
-                                                className="form-select form-select-sm dyn-has-target border-success"
-                                                style={{ width: '140px' }}
-                                                value={vItem.hasTarget ? 'true' : 'false'}
-                                                onChange={(e) => updateVolItemEOD(taskName, vIdx, 'hasTarget', e.target.value === 'true')}
-                                              >
-                                                <option value="true">Number Score</option>
-                                                <option value="false">Yes/No Task</option>
-                                              </select>
-                                              <div className="dyn-val-container flex-grow-1">
+
+                                            <div className="dyn-target-row">
+                                              <div className="dyn-target-type">
+                                                <label className="dyn-field-label">Score Mode</label>
+                                                <select
+                                                  className="form-select dyn-select"
+                                                  value={vItem.hasTarget ? 'true' : 'false'}
+                                                  onChange={(e) => updateVolItemEOD(taskName, vIdx, 'hasTarget', e.target.value === 'true')}
+                                                >
+                                                  <option value="true">Number Score</option>
+                                                  <option value="false">Yes/No Task</option>
+                                                </select>
+                                              </div>
+                                              <div className="dyn-target-val">
+                                                <label className="dyn-field-label">{vItem.hasTarget ? 'Achieved Score' : 'Status'}</label>
                                                 {vItem.hasTarget ? (
                                                   <input
                                                     type="number"
-                                                    className="form-control form-control-sm dyn-achieved border-success"
+                                                    min="0"
+                                                    className="form-control dyn-number-input"
                                                     placeholder="Achieved"
                                                     value={vItem.achieved !== undefined ? vItem.achieved : ''}
                                                     onChange={(e) => updateVolItemEOD(taskName, vIdx, 'achieved', e.target.value)}
                                                   />
                                                 ) : (
                                                   <select
-                                                    className="form-select form-select-sm dyn-status border-success"
+                                                    className="form-select dyn-select"
                                                     value={vItem.status || 'Not Done'}
                                                     onChange={(e) => updateVolItemEOD(taskName, vIdx, 'status', e.target.value)}
                                                   >
@@ -1286,11 +1314,11 @@ export default function BodEodFormModal({
                     {/* ===================================== */}
                     {s && (
                       <div className="mt-3 p-3 bg-light border border-success rounded">
-                        <label className="form-label text-success fw-bold">Sub-Categories</label>
+                        <label className="form-label text-success fw-bold mb-2">Sub-Categories</label>
                         <div>
                           {(taskState.subCatEntries || []).map((row, sIdx) => (
-                            <div className="row mt-2 align-items-center subcat-row" key={sIdx}>
-                              <div className="col-6 pe-1" style={{ width: '50%' }}>
+                            <div className="subcat-grid-row" key={sIdx}>
+                              <div className="subcat-category">
                                 <select
                                   className="form-select form-select-sm border-success fw-bold subcat-key"
                                   value={row.key}
@@ -1301,24 +1329,24 @@ export default function BodEodFormModal({
                                   ))}
                                 </select>
                               </div>
-                              <div className="col-4 px-1" style={{ width: '35%' }}>
+                              <div className="subcat-count">
                                 <input
                                   type="number"
+                                  min="0"
                                   className="form-control form-control-sm border-success subcat-val"
                                   placeholder="Count"
                                   value={row.val !== undefined ? row.val : ''}
                                   onChange={(e) => updateSubCatVal(taskName, sIdx, e.target.value)}
                                 />
                               </div>
-                              <div className="col-2 ps-1 text-end" style={{ width: '15%' }}>
-                                <button
-                                  type="button"
-                                  className="btn btn-sm btn-danger fw-bold"
-                                  onClick={() => removeSubCatRow(taskName, sIdx)}
-                                >
-                                  X
-                                </button>
-                              </div>
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-danger fw-bold subcat-del-btn"
+                                onClick={() => removeSubCatRow(taskName, sIdx)}
+                                title="Delete record"
+                              >
+                                <i className="bi bi-x-lg"></i>
+                              </button>
                             </div>
                           ))}
                         </div>

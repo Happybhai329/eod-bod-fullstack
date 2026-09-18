@@ -67,9 +67,17 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
   const fetchFormAndDashboard = async () => {
     setLoading(true);
     try {
-      // Fetch dynamic form status for today
-      const formRes = await fetch(`/api/employee/${user.id}/form`);
-      const formData = await formRes.json();
+      // Fetch dynamic form status and dashboard performance in parallel for maximum speed
+      const [formRes, dashRes] = await Promise.all([
+        fetch(`/api/employee/${user.id}/form`),
+        fetch(`/api/employee/${user.id}/dashboard?filter=${filter}`)
+      ]);
+
+      const [formData, dashData] = await Promise.all([
+        formRes.json(),
+        dashRes.json()
+      ]);
+
       if (formData.success) {
         setTodayStatus(formData.todayStatus || { bodFilled: false, eodFilled: false });
         setBodData(formData.bodData);
@@ -79,9 +87,6 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
         setNow(Date.now());
       }
 
-      // Fetch dashboard performance & history
-      const dashRes = await fetch(`/api/employee/${user.id}/dashboard?filter=${filter}`);
-      const dashData = await dashRes.json();
       if (dashData.success) {
         setData(dashData.data);
       }

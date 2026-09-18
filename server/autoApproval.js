@@ -28,10 +28,16 @@ import {
 import { parseTimestampSafe, syncDailyReportToSheets } from './googleSheets.js';
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
+const AUTO_APPROVAL_THROTTLE_MS = 60 * 1000; // Run at most once every 60 seconds
+let lastCheckTime = 0;
 
-export async function checkAutoApprovals() {
+export async function checkAutoApprovals(force = false) {
   try {
     const now = Date.now();
+    if (!force && (now - lastCheckTime < AUTO_APPROVAL_THROTTLE_MS)) {
+      return 0; // Return early if checked recently
+    }
+    lastCheckTime = now;
     // Find all reports pending review that have completed EOD data
     const reports = await query(`
       SELECT * FROM daily_reports 
