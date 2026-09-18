@@ -10,6 +10,7 @@ import KraSopModal from './components/KraSopModal';
 import NotificationsModal from './components/NotificationsModal';
 import DepartmentStructureModal from './components/DepartmentStructureModal';
 import ReportDetailModal from './components/ReportDetailModal';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -226,16 +227,18 @@ export default function App() {
       )}
 
       {/* Modals */}
-      <BodEodFormModal
-        isOpen={isFormOpen}
-        onClose={() => setIsFormOpen(false)}
-        phase={formPhase}
-        config={formConfig}
-        initialBodData={formBodData}
-        initialEodData={formEodData}
-        onSave={handleSaveReport}
-        user={user}
-      />
+      <ErrorBoundary title="Report Form Error" onReset={() => setIsFormOpen(false)}>
+        <BodEodFormModal
+          isOpen={isFormOpen}
+          onClose={() => setIsFormOpen(false)}
+          phase={formPhase}
+          config={formConfig}
+          initialBodData={formBodData}
+          initialEodData={formEodData}
+          onSave={handleSaveReport}
+          user={user}
+        />
+      </ErrorBoundary>
 
       <TaskConfigModal
         isOpen={isConfigOpen}

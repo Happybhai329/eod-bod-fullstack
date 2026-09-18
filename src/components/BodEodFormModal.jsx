@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import AssignedTasksPanel from './AssignedTasksPanel';
+import ErrorBoundary from './ErrorBoundary';
 
 /**
  * Escapes HTML characters for safe PDF generation.
@@ -26,7 +27,7 @@ export function normalizeTasks(rawConfig) {
         key: 'daily_tasks',
         inputType: 'dynamicList',
         displayPhase: 'BOTH',
-        subCategories: [],
+        subCategories: ['General'],
         subCategoryPhase: 'EOD',
         target: 1,
         description: ''
@@ -34,7 +35,23 @@ export function normalizeTasks(rawConfig) {
     ];
   }
 
-  return rawConfig.map((task, idx) => {
+  const validTasks = rawConfig.filter(t => t && typeof t === 'object');
+  if (validTasks.length === 0) {
+    return [
+      {
+        taskName: "Today's Work Items & Objectives",
+        key: 'daily_tasks',
+        inputType: 'dynamicList',
+        displayPhase: 'BOTH',
+        subCategories: ['General'],
+        subCategoryPhase: 'EOD',
+        target: 1,
+        description: ''
+      }
+    ];
+  }
+
+  return validTasks.map((task, idx) => {
     const taskName = (task.taskName || task.label || task.name || `Task ${idx + 1}`).trim();
     const key = task.key || task.taskKey || task.id || taskName;
 
@@ -54,8 +71,8 @@ export function normalizeTasks(rawConfig) {
     }
 
     const subCategories = Array.isArray(task.subCategories) && task.subCategories.length > 0
-      ? task.subCategories
-      : (Array.isArray(task.categories) && task.categories.length > 0 ? task.categories : ['General']);
+      ? task.subCategories.filter(Boolean)
+      : (Array.isArray(task.categories) && task.categories.length > 0 ? task.categories.filter(Boolean) : ['General']);
 
     const displayPhase = (task.displayPhase || 'BOTH').toUpperCase();
     const subCategoryPhase = (task.subCategoryPhase || 'EOD').toUpperCase();
@@ -67,7 +84,7 @@ export function normalizeTasks(rawConfig) {
       key,
       inputType,
       displayPhase,
-      subCategories,
+      subCategories: subCategories.length > 0 ? subCategories : ['General'],
       subCategoryPhase,
       target,
       description
@@ -97,7 +114,8 @@ export default function BodEodFormModal({
 
   // Filter tasks visible for the current phase matching reference GS app logic
   const visibleTasks = useMemo(() => {
-    return normalizedTasks.filter(t => {
+    return (normalizedTasks || []).filter(t => {
+      if (!t) return false;
       const m = (t.displayPhase === 'BOTH' || t.displayPhase === phase + '_ONLY');
       const s = (t.inputType === 'categoryNumber' && (t.subCategoryPhase === 'BOTH' || t.subCategoryPhase === phase));
       return m || s;
@@ -106,18 +124,19 @@ export default function BodEodFormModal({
 
   // Helper to find existing task data from bod/eod payloads
   const findTaskData = (dataObj, t) => {
-    if (!dataObj) return null;
+    if (!dataObj || !t) return null;
     let obj = dataObj;
     if (typeof obj === 'string') {
       try { obj = JSON.parse(obj); } catch (e) { return null; }
     }
     if (typeof obj !== 'object' || obj === null) return null;
 
-    if (obj[t.taskName]) return obj[t.taskName];
-    if (t.key && obj[t.key]) return obj[t.key];
+    if (t.taskName && obj[t.taskName] !== undefined) return obj[t.taskName];
+    if (t.key && obj[t.key] !== undefined) return obj[t.key];
 
     // Case-insensitive, trimmed, and singular/plural fallback search (e.g. 'OTHER WORK' vs 'OTHER WORKS')
     const targetName = (t.taskName || t.key || '').trim().toLowerCase();
+    if (!targetName) return null;
     const targetSingular = targetName.replace(/s$/, '');
 
     for (const k of Object.keys(obj)) {
@@ -141,6 +160,7 @@ export default function BodEodFormModal({
     const initialVolMap = {};
 
     visibleTasks.forEach((t) => {
+      if (!t || !t.taskName) return;
       const taskName = t.taskName;
       const bodSaved = findTaskData(initialBodData, t);
       const eodSaved = findTaskData(initialEodData, t);
@@ -152,17 +172,32 @@ export default function BodEodFormModal({
           let list = [];
           const rawList = savedData?.list || (Array.isArray(savedData) ? savedData : null);
           if (Array.isArray(rawList) && rawList.length > 0) {
-            list = rawList.map(l => ({
-              title: l.title || l.text || (l.description ? l.description.split('\n')[0] : '') || '',
-              time: l.time || '',
-              hasTarget: l.hasTarget === true || l.hasTarget === 'true' || l.hasTarget === undefined,
-              target: l.target !== undefined && l.target !== '' ? l.target : 1,
-              description: l.description || '',
-              achieved: '',
-              status: '',
-              checklist: [],
-              isVoluntary: false
-            }));
+            list = rawList.filter(Boolean).map(l => {
+              if (typeof l === 'string') {
+                return {
+                  title: l,
+                  time: '',
+                  hasTarget: true,
+                  target: 1,
+                  description: '',
+                  achieved: '',
+                  status: '',
+                  checklist: [],
+                  isVoluntary: false
+                };
+              }
+              return {
+                title: l.title || l.text || (l.description ? String(l.description).split('\n')[0] : '') || '',
+                time: l.time || '',
+                hasTarget: l.hasTarget === true || l.hasTarget === 'true' || l.hasTarget === undefined,
+                target: l.target !== undefined && l.target !== '' ? l.target : 1,
+                description: l.description ? String(l.description) : '',
+                achieved: '',
+                status: '',
+                checklist: [],
+                isVoluntary: false
+              };
+            });
           } else {
             list = [
               { title: '', time: '', hasTarget: true, target: 1, description: '', achieved: '', status: '', checklist: [], isVoluntary: false }
@@ -171,7 +206,7 @@ export default function BodEodFormModal({
           initialForm[taskName] = {
             type: 'dynamicList',
             remarks: savedData?.remarks || '',
-            list
+            list: list.length > 0 ? list : [{ title: '', time: '', hasTarget: true, target: 1, description: '', achieved: '', status: '', checklist: [], isVoluntary: false }]
           };
         } else {
           // EOD Dynamic List
@@ -181,22 +216,22 @@ export default function BodEodFormModal({
           const eodList = Array.isArray(rawEodList) ? rawEodList : [];
 
           // Morning items mapped to their EOD progress & checklists
-          const morningItems = bodList.map((bItem) => {
-            const bTitle = (bItem.title || bItem.text || (bItem.description ? bItem.description.split('\n')[0] : '') || '').trim();
-            const eMatch = eodList.find(e => {
-              const eTitle = (e.title || e.text || (e.description ? e.description.split('\n')[0] : '') || '').trim();
+          const morningItems = bodList.filter(Boolean).map((bItem) => {
+            const bTitle = (typeof bItem === 'string' ? bItem : (bItem.title || bItem.text || (bItem.description ? String(bItem.description).split('\n')[0] : '') || '')).trim();
+            const eMatch = eodList.filter(Boolean).find(e => {
+              const eTitle = (typeof e === 'string' ? e : (e.title || e.text || (e.description ? String(e.description).split('\n')[0] : '') || '')).trim();
               return (eTitle && bTitle && eTitle.toLowerCase() === bTitle.toLowerCase()) && !e.isVoluntary;
             });
-            const descLines = (bItem.description || '').split('\n').filter(x => x.trim() !== '');
+            const descLines = (typeof bItem === 'object' && bItem?.description ? String(bItem.description) : '').split('\n').filter(x => x.trim() !== '');
             const savedChecklist = eMatch && Array.isArray(eMatch.checklist) ? eMatch.checklist : [];
             const checklist = descLines.map((_, idx) => Boolean(savedChecklist[idx]));
 
             return {
               title: bTitle,
-              time: bItem.time || '',
-              hasTarget: bItem.hasTarget === true || bItem.hasTarget === 'true' || bItem.hasTarget === undefined,
-              target: bItem.target !== undefined && bItem.target !== '' ? bItem.target : 1,
-              description: bItem.description || '',
+              time: (typeof bItem === 'object' && bItem?.time) || '',
+              hasTarget: typeof bItem === 'object' ? (bItem.hasTarget === true || bItem.hasTarget === 'true' || bItem.hasTarget === undefined) : true,
+              target: typeof bItem === 'object' && bItem.target !== undefined && bItem.target !== '' ? bItem.target : 1,
+              description: (typeof bItem === 'object' && bItem?.description) ? String(bItem.description) : '',
               achieved: eMatch ? (eMatch.achieved !== undefined ? eMatch.achieved : '') : '',
               status: eMatch ? (eMatch.status || 'Not Done') : 'Not Done',
               checklist,
@@ -205,12 +240,12 @@ export default function BodEodFormModal({
           });
 
           // Voluntary extra items
-          const volItems = eodList.filter(e => e.isVoluntary).map(v => ({
-            title: v.title || v.text || (v.description ? v.description.split('\n')[0] : '') || '',
+          const volItems = eodList.filter(e => e && typeof e === 'object' && e.isVoluntary).map(v => ({
+            title: v.title || v.text || (v.description ? String(v.description).split('\n')[0] : '') || '',
             time: v.time || '',
             hasTarget: v.hasTarget === true || v.hasTarget === 'true' || v.hasTarget === undefined,
             target: '',
-            description: v.description || '',
+            description: v.description ? String(v.description) : '',
             achieved: v.achieved !== undefined ? v.achieved : '',
             status: v.status || 'Not Done',
             checklist: [],
@@ -245,11 +280,11 @@ export default function BodEodFormModal({
       } else if (t.inputType === 'categoryNumber') {
         const subMap = savedData?.subCategories || (phase === 'EOD' && bodSaved?.subCategories ? bodSaved.subCategories : {});
         const subCatEntries = [];
-        if (subMap && Object.keys(subMap).length > 0) {
+        if (subMap && typeof subMap === 'object' && !Array.isArray(subMap) && Object.keys(subMap).length > 0) {
           for (const k in subMap) {
             subCatEntries.push({ key: k, val: subMap[k] });
           }
-        } else if (t.subCategories && t.subCategories.length > 0) {
+        } else if (Array.isArray(t.subCategories) && t.subCategories.length > 0) {
           subCatEntries.push({ key: t.subCategories[0], val: '' });
         }
         const fallbackTarget = bodSaved?.value !== undefined ? bodSaved.value : (t.target || '');
@@ -850,7 +885,7 @@ export default function BodEodFormModal({
             </button>
           </div>
 
-          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0, overflow: 'hidden' }}>
             <div className="modal-body form-modal-body bg-light">
               {error && (
                 <div style={{ padding: '10px', background: 'var(--danger-light)', color: 'var(--danger)', borderRadius: '6px', marginBottom: '16px', fontSize: '0.85rem' }}>
@@ -891,7 +926,9 @@ export default function BodEodFormModal({
               )}
 
               {/* Exact GS App Assigned Tasks Panel */}
-              <AssignedTasksPanel empId={user?.id || user?.emp_id} isModal={true} />
+              <ErrorBoundary title="Assigned Tasks">
+                <AssignedTasksPanel empId={user?.id || user?.emp_id} isModal={true} />
+              </ErrorBoundary>
 
               {/* Render visible tasks */}
               {visibleTasks.map((t, i) => {
@@ -928,7 +965,7 @@ export default function BodEodFormModal({
                                   List Items, Targets & Time
                                 </label>
                                 <div>
-                                  {(taskState.list || []).map((item, idx) => (
+                                  {(taskState.list || []).filter(Boolean).map((item, idx) => (
                                     <div className="dyn-item-card" key={idx}>
                                       <div className="dyn-item-header">
                                         <span className="dyn-item-badge">#{idx + 1}</span>
@@ -1022,8 +1059,8 @@ export default function BodEodFormModal({
                                   Update Morning Items (Checklists & Progress)
                                 </label>
                                 <div>
-                                  {(taskState.morningItems || []).length > 0 ? (
-                                    (taskState.morningItems || []).map((mItem, bIdx) => {
+                                  {(taskState.morningItems || []).filter(Boolean).length > 0 ? (
+                                    (taskState.morningItems || []).filter(Boolean).map((mItem, bIdx) => {
                                       const hasTar = mItem.hasTarget === true || mItem.hasTarget === 'true' || mItem.hasTarget === undefined;
                                       const descLines = (mItem.description || '').split('\n').filter(x => x.trim() !== '');
 
@@ -1138,7 +1175,7 @@ export default function BodEodFormModal({
                                   {hasVol && (
                                     <div className="mt-2">
                                       <div>
-                                        {(taskState.volItems || []).map((vItem, vIdx) => (
+                                        {(taskState.volItems || []).filter(Boolean).map((vItem, vIdx) => (
                                           <div className="dyn-item-card vol-item-card" key={vIdx}>
                                             <div className="dyn-item-header">
                                               <span className="dyn-item-badge vol-badge">Extra #{vIdx + 1}</span>
@@ -1316,7 +1353,7 @@ export default function BodEodFormModal({
                       <div className="mt-3 p-3 bg-light border border-success rounded">
                         <label className="form-label text-success fw-bold mb-2">Sub-Categories</label>
                         <div>
-                          {(taskState.subCatEntries || []).map((row, sIdx) => (
+                          {(taskState.subCatEntries || []).filter(Boolean).map((row, sIdx) => (
                             <div className="subcat-grid-row" key={sIdx}>
                               <div className="subcat-category">
                                 <select

@@ -219,6 +219,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
             {todayStatus.bodFilled ? (
               isBodEditable ? (
                 <button
+                  type="button"
                   className="btn btn-warning"
                   style={{ width: '100%' }}
                   onClick={() => onOpenForm('BOD', config, bodData, eodData)}
@@ -227,6 +228,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                 </button>
               ) : (
                 <button
+                  type="button"
                   className="btn btn-outline-primary"
                   style={{ width: '100%' }}
                   disabled
@@ -236,6 +238,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               )
             ) : (
               <button
+                type="button"
                 className="btn btn-primary"
                 style={{ width: '100%' }}
                 onClick={() => onOpenForm('BOD', config, bodData, eodData)}
@@ -283,6 +286,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
             {todayStatus.eodFilled ? (
               isEodEditable ? (
                 <button
+                  type="button"
                   className="btn btn-warning"
                   style={{ width: '100%' }}
                   onClick={() => onOpenForm('EOD', config, bodData, eodData)}
@@ -291,6 +295,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                 </button>
               ) : (
                 <button
+                  type="button"
                   className="btn btn-outline-success"
                   style={{ width: '100%' }}
                   disabled
@@ -300,6 +305,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               )
             ) : !todayStatus.bodFilled ? (
               <button
+                type="button"
                 className="btn btn-secondary"
                 style={{ width: '100%', opacity: 0.65, cursor: 'not-allowed' }}
                 disabled
@@ -309,6 +315,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               </button>
             ) : (
               <button
+                type="button"
                 className="btn btn-gold"
                 style={{ width: '100%' }}
                 onClick={() => onOpenForm('EOD', config, bodData, eodData)}
