@@ -121,7 +121,7 @@ export default function TaskConfigModal({ isOpen, onClose, empId, empName, onSav
         {/* Modal Header matching index.html setupModal */}
         <div className="modal-header bg-navy text-white" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px' }}>
           <h5 className="modal-title" style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>
-            Setup Config: <span style={{ color: '#f6bd3b' }}>{empName} ({empId})</span>
+            Setup Config: <span style={{ color: '#f6bd3b' }}>{empName}</span>
           </h5>
           <button type="button" className="btn-close-white" onClick={onClose}>×</button>
         </div>

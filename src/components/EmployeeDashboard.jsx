@@ -162,7 +162,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
             Welcome back, {user.name}
           </h1>
           <p className="section-description">
-            {user.department} {user.subDepartment ? `• ${user.subDepartment}` : ''} • Employee ID: {user.id}
+            {user.department} {user.subDepartment ? `• ${user.subDepartment}` : ''} {user.designation ? `• ${user.designation}` : ''}
           </p>
         </div>
 
@@ -382,7 +382,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
               >
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--danger)' }}>{f.id} • {f.date}</span>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 800, color: 'var(--danger)' }}>Fine Notice • {f.date}</span>
                     <span className={`badge ${f.status === 'Acknowledged' ? 'badge-approved' : f.status === 'Disputed' ? 'badge-pending' : 'badge-danger'}`}>
                       {f.status || 'Pending'}
                     </span>
@@ -523,7 +523,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                         )}
                       </td>
                       <td>
-                        <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail(r)}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail({ ...r, employee_name: user.name })}>
                           <i className="bi bi-eye"></i> Details
                         </button>
                       </td>

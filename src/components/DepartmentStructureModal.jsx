@@ -150,7 +150,7 @@ export default function DepartmentStructureModal({ isOpen, onClose, user }) {
                     .filter(e => e.status?.toLowerCase() === 'active')
                     .map((e) => (
                       <option key={e.id} value={e.id}>
-                        {e.name} ({e.id}) - {e.department || e.role}
+                        {e.name} - {e.department || e.role}
                       </option>
                     ))}
                 </select>

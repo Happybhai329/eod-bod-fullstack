@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 
 function formatScoreNum(val) {
   if (val === null || val === undefined || val === '' || val === '-') return '-';
@@ -17,6 +17,20 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [syncStatus, setSyncStatus] = useState({ isSyncing: false, lastSyncTime: null, lastSyncStatus: 'IDLE' });
+
+  // Map employee IDs to names for UI display — ID is never shown directly
+  const empNameMap = useMemo(() => {
+    const map = {};
+    (data.managedEmployees || []).forEach(e => {
+      if (e.id && e.name) map[e.id] = e.name;
+      if (e.emp_id && e.name) map[e.emp_id] = e.name;
+    });
+    return map;
+  }, [data.managedEmployees]);
+
+  const getEmpName = (r) => {
+    return r.employee_name || empNameMap[r.employee_id] || r.name || 'Staff Member';
+  };
 
   useEffect(() => {
     fetchHeadDashboard();
@@ -121,7 +135,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
       });
       const result = await res.json();
       if (result.success) {
-        if (showToast) showToast(`Report for ${report.employee_id} approved with rating ${input.rating}%.`);
+        if (showToast) showToast(`Report for ${getEmpName(report)} approved with rating ${input.rating}%.`);
         fetchHeadDashboard();
       } else {
         alert(result.message || 'Failed to save rating.');
@@ -138,12 +152,12 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
       return;
     }
 
-    const headers = ['Date', 'Employee ID', 'Department', 'System Score %', 'Head Rating %', 'Final Score %', 'Attendance', 'Overtime (hrs)', 'Status', 'Fine Amount', 'Fine Reason', 'Employee Remarks'];
+    const headers = ['Date', 'Employee Name', 'Department', 'System Score %', 'Head Rating %', 'Final Score %', 'Attendance', 'Overtime (hrs)', 'Status', 'Fine Amount', 'Fine Reason', 'Employee Remarks'];
     const csvContent = [
       headers.join(','),
       ...rows.map(r => [
         `"${r.date || ''}"`,
-        `"${r.employee_id || ''}"`,
+        `"${getEmpName(r)}"`,
         `"${r.department || ''}"`,
         r.system_score ?? 0,
         r.head_rating ?? '',
@@ -178,8 +192,9 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
   const displayedReports = [...(data.reports || [])]
     .sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date))
     .filter(r => {
+      const empName = getEmpName(r);
       const matchesSearch = !searchTerm ||
-        r.employee_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        empName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         (r.department && r.department.toLowerCase().includes(searchTerm.toLowerCase())) ||
         r.date.includes(searchTerm);
 
@@ -292,7 +307,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
             >
               <div>
                 <strong style={{ fontSize: '0.9rem', color: 'var(--ink)', display: 'block' }}>{emp.name}</strong>
-                <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>{emp.id} • {emp.designation || emp.role}</span>
+                <span style={{ fontSize: '0.78rem', color: 'var(--ink-muted)' }}>{emp.designation || emp.role || emp.department}</span>
               </div>
               <button
                 className="btn btn-secondary btn-sm"
@@ -313,7 +328,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
             <h2 className="section-title">
               <i className="bi bi-person-badge text-primary me-1"></i> My Own Work (Head Submissions)
             </h2>
-            <p className="section-description">Configure and submit your own morning BOD and evening EOD reports as {user.name} ({user.id}).</p>
+            <p className="section-description">Configure and submit your own morning BOD and evening EOD reports as {user.name}.</p>
           </div>
           <div className="filter-pills">
             <button className="btn-pill" onClick={() => onOpenConfig(user.id, user.name)}>
@@ -368,7 +383,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
             <thead>
               <tr>
                 <th>Date</th>
-                <th>Emp ID</th>
+                <th>Employee Name</th>
                 <th>Dept</th>
                 <th>System %</th>
                 <th>Head Rating (0-200%)</th>
@@ -396,7 +411,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                     <tr key={reportKey}>
                       <td style={{ fontWeight: 600 }}>{r.date}</td>
                       <td>
-                        <strong>{r.employee_id}</strong>
+                        <strong>{getEmpName(r)}</strong>
                       </td>
                       <td>{r.department}</td>
                       <td>
@@ -508,13 +523,13 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                               Awaiting EOD
                             </button>
                           )}
-                          <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail(r)} title="View Details">
+                          <button className="btn btn-secondary btn-sm" onClick={() => onOpenDetail({ ...r, employee_name: getEmpName(r) })} title="View Details">
                             <i className="bi bi-eye"></i>
                           </button>
                           <button
                             className="btn btn-secondary btn-sm"
                             style={{ color: 'var(--danger)' }}
-                            onClick={() => onOpenFine(r.employee_id, r.date)}
+                            onClick={() => onOpenFine(r.employee_id, r.date, getEmpName(r))}
                             title="Issue Fine Notice"
                           >
                             <i className="bi bi-exclamation-octagon"></i>

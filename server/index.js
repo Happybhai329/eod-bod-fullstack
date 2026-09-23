@@ -183,10 +183,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     const trimmedId = empId.trim();
     const emp = await get(
-      `SELECT * FROM employees WHERE id = ? OR emp_id = ?`,
-      [trimmedId, trimmedId]
+      `SELECT * FROM employees WHERE id = ? OR emp_id = ? OR LOWER(name) = LOWER(?)`,
+      [trimmedId, trimmedId, trimmedId]
     );
-    if (!emp) return res.status(404).json({ success: false, message: 'Employee ID not found in system.' });
+    if (!emp) return res.status(404).json({ success: false, message: 'Employee not found in system.' });
     if (emp.status && emp.status.toLowerCase() !== 'active') return res.status(403).json({ success: false, message: 'Access Denied: Account status is not Active.' });
 
     const effectiveId = emp.emp_id || emp.id;
@@ -594,6 +594,7 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
       }
       return {
         ...r,
+        employee_name: emp ? emp.name : '',
         has_eod: validEod,
         system_score: validEod ? sanitizeScore(r.system_score) : null,
         final_score: validEod ? sanitizeScore(r.final_score) : null,
@@ -687,10 +688,20 @@ app.get('/api/head/dashboard', async (req, res) => {
       managedEmps.flatMap(e => [e.id, e.emp_id].filter(Boolean))
     );
 
+    const empMap = {};
+    allEmps.forEach(e => {
+      if (e.id && e.name) empMap[e.id] = e.name;
+      if (e.emp_id && e.name) empMap[e.emp_id] = e.name;
+    });
+
     let sql = `SELECT * FROM daily_reports WHERE eod_data IS NOT NULL AND eod_data != '' AND eod_data != '{}' AND eod_data != 'null'`;
     const allReports = await query(sql);
     const reports = allReports
       .filter(r => managedEmpIds.has(r.employee_id) && hasValidEod(r))
+      .map(r => ({
+        ...r,
+        employee_name: empMap[r.employee_id] || ''
+      }))
       .sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));
 
     // Filter reports according to selected time period (Daily, Weekly, Monthly)
@@ -717,8 +728,9 @@ app.get('/api/head/dashboard', async (req, res) => {
       const avg = Math.round(arr.reduce((a, b) => a + b, 0) / arr.length);
       overallSum += avg;
       overallCount++;
-      if (avg > highest) { highest = avg; topEmp = `${eId} (${avg}%)`; }
-      if (avg < lowest) { lowest = avg; lowEmp = `${eId} (${avg}%)`; }
+      const eName = empMap[eId] || 'Employee';
+      if (avg > highest) { highest = avg; topEmp = `${eName} (${avg}%)`; }
+      if (avg < lowest) { lowest = avg; lowEmp = `${eName} (${avg}%)`; }
     }
 
     const overallAverage = overallCount > 0 ? Math.round(overallSum / overallCount) : 0;
@@ -761,7 +773,7 @@ app.post('/api/head/rate', async (req, res) => {
     }
 
     const headUser = await get(`SELECT name FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
-    const raterName = headUser ? `${headUser.name} (${headId})` : `Head ${headId}`;
+    const raterName = headUser ? headUser.name : 'Department Head';
     const sysScore = parseScoreHelper(report.system_score, 100);
     const finalScore = calculateFinalScore(sysScore, numRating);
     const nowIso = new Date().toISOString();
@@ -894,7 +906,7 @@ app.post('/api/fines/issue', async (req, res) => {
     }
 
     const headUser = await get(`SELECT name FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
-    const issuerName = headUser ? `${headUser.name} (${headId})` : `Head ${headId}`;
+    const issuerName = headUser ? headUser.name : 'Department Head';
     const fineId = 'F' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
     const nowIso = new Date().toISOString();
     const docName = `Fine_Notice_${empId}_${dateStr.replace(/\//g, '')}.pdf`;

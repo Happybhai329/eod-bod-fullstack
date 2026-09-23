@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
  * Issue Fine Modal
  * Matches 1:1 with fineModal in D:\prime\bod and eod\index.html lines 552-590
  */
-export default function FineModal({ isOpen, onClose, empId, dateStr, headId, onIssueFine }) {
+export default function FineModal({ isOpen, onClose, empId, empName, dateStr, headId, onIssueFine }) {
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [file, setFile] = useState(null);
@@ -54,6 +54,7 @@ export default function FineModal({ isOpen, onClose, empId, dateStr, headId, onI
 
       await onIssueFine({
         empId,
+        empName,
         dateStr,
         amount: numAmount,
         reason: reason.trim(),
@@ -91,12 +92,12 @@ export default function FineModal({ isOpen, onClose, empId, dateStr, headId, onI
 
             <div className="mb-3">
               <label className="form-label fw-bold" style={{ fontSize: '0.82rem', marginBottom: '4px', display: 'block' }}>
-                Employee ID
+                Employee Name
               </label>
               <input
                 type="text"
                 className="form-control"
-                value={empId || ''}
+                value={empName || empId || ''}
                 readOnly
                 style={{ backgroundColor: '#f1f5f9' }}
               />

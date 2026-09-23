@@ -116,7 +116,7 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
         {/* Modal Header matching index.html taskDetailModal */}
         <div className="modal-header bg-navy text-white" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px' }}>
           <h5 className="modal-title" style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>
-            Task Details - <span style={{ color: '#f6bd3b' }}>{dateStr}</span> ({empId})
+            Task Details - <span style={{ color: '#f6bd3b' }}>{dateStr}</span> {currentReport.employee_name || currentReport.name ? `(${currentReport.employee_name || currentReport.name})` : ''}
           </h5>
           <button type="button" className="btn-close-white" onClick={onClose}>×</button>
         </div>
@@ -127,6 +127,12 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
           <div className="detail-overview mb-3">
             <span><strong>Date:</strong> {dateStr}</span>
             <span>|</span>
+            {(currentReport.employee_name || currentReport.name) && (
+              <>
+                <span><strong>Employee:</strong> {currentReport.employee_name || currentReport.name}</span>
+                <span>|</span>
+              </>
+            )}
             <span><strong>Department:</strong> {currentReport.department || 'General'}</span>
             <span>|</span>
             <span>
@@ -495,7 +501,7 @@ export default function ReportDetailModal({ isOpen, onClose, report, user, onOpe
                     type="button"
                     className="btn btn-danger btn-sm fw-bold"
                     onClick={() => {
-                      if (onOpenFine) onOpenFine(empId, dateStr);
+                      if (onOpenFine) onOpenFine(empId, dateStr, currentReport.employee_name || currentReport.name);
                     }}
                   >
                     <i className="bi bi-exclamation-octagon me-1"></i> Issue Fine

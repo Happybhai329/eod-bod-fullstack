@@ -9,7 +9,7 @@ export default function Login({ onLogin }) {
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!empId.trim()) {
-      setError('Please enter your assigned Employee ID.');
+      setError('Please enter your Employee Name or ID.');
       return;
     }
     setLoading(true);
@@ -170,7 +170,7 @@ export default function Login({ onLogin }) {
           <form onSubmit={handleSubmit}>
             <div className="form-group" style={{ marginBottom: '20px' }}>
               <label className="form-label" htmlFor="empIdInput">
-                {role === 'Head' ? 'Head / Manager ID' : 'Employee ID'}
+                {role === 'Head' ? 'Head / Manager Name or ID' : 'Employee Name or ID'}
               </label>
               <div style={{ position: 'relative' }}>
                 <input
@@ -178,7 +178,7 @@ export default function Login({ onLogin }) {
                   type="text"
                   className="form-control"
                   style={{ paddingLeft: '38px', fontSize: '0.92rem' }}
-                  placeholder={role === 'Head' ? 'Enter Head / Manager ID' : 'Enter Employee ID'}
+                  placeholder={role === 'Head' ? 'Enter Head name or ID' : 'Enter Employee name or ID'}
                   value={empId}
                   onChange={(e) => setEmpId(e.target.value)}
                   autoFocus

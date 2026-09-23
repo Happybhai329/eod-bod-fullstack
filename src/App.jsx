@@ -28,6 +28,7 @@ export default function App() {
 
   const [isFineOpen, setIsFineOpen] = useState(false);
   const [fineEmpId, setFineEmpId] = useState('');
+  const [fineEmpName, setFineEmpName] = useState('');
   const [fineDateStr, setFineDateStr] = useState('');
 
   const [isKraSopOpen, setIsKraSopOpen] = useState(false);
@@ -153,8 +154,9 @@ export default function App() {
   };
 
   // Open Fine modal
-  const handleOpenFine = (empId, dateStr) => {
+  const handleOpenFine = (empId, dateStr, empName) => {
     setFineEmpId(empId);
+    setFineEmpName(empName || '');
     setFineDateStr(dateStr);
     setIsFineOpen(true);
   };
@@ -170,7 +172,7 @@ export default function App() {
     if (!data.success) {
       throw new Error(data.message || 'Error issuing fine.');
     }
-    showToast(`Fine notice issued for ${finePayload.empId}.`, 'warning');
+    showToast(`Fine notice issued for ${finePayload.empName || 'employee'}.`, 'warning');
   };
 
   // Open Detail modal
@@ -254,6 +256,7 @@ export default function App() {
         isOpen={isFineOpen}
         onClose={() => setIsFineOpen(false)}
         empId={fineEmpId}
+        empName={fineEmpName}
         dateStr={fineDateStr}
         headId={user?.id}
         onIssueFine={handleIssueFine}
@@ -282,9 +285,9 @@ export default function App() {
         onClose={() => setIsDetailOpen(false)}
         report={detailReport}
         user={user}
-        onOpenFine={(empId, date) => {
+        onOpenFine={(empId, date, empName) => {
           setIsDetailOpen(false);
-          handleOpenFine(empId, date);
+          handleOpenFine(empId, date, empName);
         }}
         onRateSuccess={() => {
           showToast('Rating saved successfully!');
