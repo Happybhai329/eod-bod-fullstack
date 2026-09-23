@@ -62,10 +62,7 @@ function asyncSyncFine(fine) {
 // Utility functions
 function getTodayString() {
   const d = new Date();
-  const day = String(d.getDate()).padStart(2, '0');
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
+  return d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
 }
 
 function parseDateDDMMYYYY(dateStr) {
@@ -463,10 +460,11 @@ app.post('/api/employee/:id/report', async (req, res) => {
         // Preserve bod_submitted_at - never reset it on edits
         let sysScore = existing.system_score;
         let finalScore = existing.final_score;
-        if (existing.eod_data) {
+        const rawEod = existing.eod_data || existing.eodData;
+        if (rawEod) {
           let eodObj = null;
           try {
-            eodObj = typeof existing.eod_data === 'object' ? existing.eod_data : JSON.parse(existing.eod_data);
+            eodObj = typeof rawEod === 'object' ? rawEod : JSON.parse(rawEod);
           } catch (e) {}
           if (eodObj && Object.keys(eodObj).length > 0) {
             sysScore = calculatePerformance(phaseData, eodObj);
@@ -492,11 +490,12 @@ app.post('/api/employee/:id/report', async (req, res) => {
       } else {
         // Enforce that BOD exists and is not empty before allowing EOD submission
         let bodObj = null;
-        if (existing.bod_data) {
-          if (typeof existing.bod_data === 'object') {
-            bodObj = existing.bod_data;
+        const rawBod = existing.bod_data || existing.bodData;
+        if (rawBod) {
+          if (typeof rawBod === 'object') {
+            bodObj = rawBod;
           } else {
-            try { bodObj = JSON.parse(existing.bod_data); } catch (e) {}
+            try { bodObj = JSON.parse(rawBod); } catch (e) {}
           }
         }
 

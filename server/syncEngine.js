@@ -249,9 +249,21 @@ export async function syncInbound() {
           const safeOvertime = r.overtime ?? existing?.overtime ?? 0;
           const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
           const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
-          let safeApprovalStatus = r.approval_status || existing?.approval_status || (hasEod ? 'Pending Review' : 'EOD Missed');
-          if (!hasEod && (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Pending Review')) {
-            safeApprovalStatus = 'EOD Missed';
+          const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
+          const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
+          let safeApprovalStatus = r.approval_status || existing?.approval_status;
+          if (!safeApprovalStatus) {
+            safeApprovalStatus = hasEod ? 'Pending Review' : (isTodayReport ? 'Pending EOD' : 'EOD Missed');
+          } else if (!hasEod) {
+            if (isTodayReport) {
+              if (safeApprovalStatus === 'EOD Missed' || safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Pending Review') {
+                safeApprovalStatus = 'Pending EOD';
+              }
+            } else {
+              if (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Pending Review') {
+                safeApprovalStatus = 'EOD Missed';
+              }
+            }
           }
           const safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
           const safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
@@ -265,8 +277,8 @@ export async function syncInbound() {
           const safeFineIssuedBy = r.fine_issued_by || existing?.fine_issued_by || null;
           const safeFineStatus = r.fine_status || existing?.fine_status || null;
           const safeRemarks = r.employee_remarks || existing?.employee_remarks || null;
-          const safeBodSubmittedAt = existing?.bod_submitted_at || (safeBod ? (existing?.last_updated || r.last_updated || null) : null);
-          const safeEodSubmittedAt = existing?.eod_submitted_at || (hasEod ? (existing?.last_updated || r.last_updated || null) : null);
+          const safeBodSubmittedAt = existing?.bod_submitted_at || (safeBod ? (existing?.last_updated || existing?.createdAt || r.last_updated || new Date().toISOString()) : null);
+          const safeEodSubmittedAt = existing?.eod_submitted_at || (hasEod ? (existing?.last_updated || existing?.createdAt || r.last_updated || new Date().toISOString()) : null);
 
           await run(
             `INSERT OR REPLACE INTO daily_reports (
@@ -400,6 +412,12 @@ export async function syncOutbound() {
 
       const hasEod = Boolean(r.eod_data && r.eod_data !== '' && r.eod_data !== '{}' && r.eod_data !== 'null');
 
+      const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
+      const isTodayReport = (targetDate === todayDateStr || r.date === todayDateStr || r.reportDate === todayDateStr);
+      const safeOutboundStatus = hasEod
+        ? mergeOutboundVal(r.approval_status, 13, 'Pending Review')
+        : (isTodayReport ? mergeOutboundVal(r.approval_status, 13, 'Pending EOD') : 'EOD Missed');
+
       const rowValues = [
         formattedDate,
         r.employee_id,
@@ -414,7 +432,7 @@ export async function syncOutbound() {
         mergeOutboundVal(r.overtime, 10, 0),
         mergeOutboundVal(r.rating_last_updated ? formatIndianDateTime(r.rating_last_updated) : '', 11),
         mergeOutboundVal(r.rating_edited_by, 12),
-        hasEod ? mergeOutboundVal(r.approval_status, 13, 'Pending Review') : 'EOD Missed',
+        safeOutboundStatus,
         mergeOutboundVal(r.approval_timestamp ? formatIndianDateTime(r.approval_timestamp) : '', 14),
         mergeOutboundVal(r.expiry_timestamp ? formatIndianDateTime(r.expiry_timestamp) : '', 15),
         mergeOutboundVal(r.rated_by, 16),

@@ -80,8 +80,16 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
 
       if (formData.success) {
         setTodayStatus(formData.todayStatus || { bodFilled: false, eodFilled: false });
-        setBodData(formData.bodData);
-        setEodData(formData.eodData);
+        let parsedBod = formData.bodData;
+        if (typeof parsedBod === 'string') {
+          try { parsedBod = JSON.parse(parsedBod); } catch (e) {}
+        }
+        let parsedEod = formData.eodData;
+        if (typeof parsedEod === 'string') {
+          try { parsedEod = JSON.parse(parsedEod); } catch (e) {}
+        }
+        setBodData(parsedBod);
+        setEodData(parsedEod);
         setConfig(formData.config || []);
         setFetchedAt(Date.now());
         setNow(Date.now());

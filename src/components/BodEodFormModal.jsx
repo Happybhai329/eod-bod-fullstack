@@ -120,6 +120,85 @@ export default function BodEodFormModal({
   const [shareData, setShareData] = useState({ waText: '', pdfHtml: '' });
   const [copied, setCopied] = useState(false);
 
+  const [currentBodData, setCurrentBodData] = useState(() => {
+    if (!initialBodData) return null;
+    if (typeof initialBodData === 'string') {
+      try { return JSON.parse(initialBodData); } catch (e) { return null; }
+    }
+    return initialBodData;
+  });
+
+  const [currentEodData, setCurrentEodData] = useState(() => {
+    if (!initialEodData) return null;
+    if (typeof initialEodData === 'string') {
+      try { return JSON.parse(initialEodData); } catch (e) { return null; }
+    }
+    return initialEodData;
+  });
+
+  const [isLoadingBod, setIsLoadingBod] = useState(false);
+
+  useEffect(() => {
+    if (initialBodData) {
+      let b = initialBodData;
+      if (typeof b === 'string') {
+        try { b = JSON.parse(b); } catch (e) {}
+      }
+      setCurrentBodData(b);
+    } else {
+      setCurrentBodData(null);
+    }
+  }, [initialBodData]);
+
+  useEffect(() => {
+    if (initialEodData) {
+      let ed = initialEodData;
+      if (typeof ed === 'string') {
+        try { ed = JSON.parse(ed); } catch (e) {}
+      }
+      setCurrentEodData(ed);
+    } else {
+      setCurrentEodData(null);
+    }
+  }, [initialEodData]);
+
+  // Self-healing fallback: If EOD is opened without BOD in props, verify with server immediately!
+  useEffect(() => {
+    const hasBod = currentBodData && typeof currentBodData === 'object' && Object.keys(currentBodData).length > 0;
+    if (isOpen && phase === 'EOD' && !hasBod && user?.id) {
+      let isMounted = true;
+      setIsLoadingBod(true);
+      fetch(`/api/employee/${user.id}/form`)
+        .then(res => res.json())
+        .then(data => {
+          if (!isMounted) return;
+          if (data.success) {
+            let b = data.bodData;
+            if (typeof b === 'string') {
+              try { b = JSON.parse(b); } catch (e) {}
+            }
+            if (b && typeof b === 'object' && Object.keys(b).length > 0) {
+              setCurrentBodData(b);
+            }
+            if (data.eodData && (!currentEodData || Object.keys(currentEodData).length === 0)) {
+              let ed = data.eodData;
+              if (typeof ed === 'string') {
+                try { ed = JSON.parse(ed); } catch (e) {}
+              }
+              setCurrentEodData(ed);
+            }
+          }
+        })
+        .catch(err => {
+          console.warn('[BodEodFormModal] Fallback fetch failed:', err);
+        })
+        .finally(() => {
+          if (isMounted) setIsLoadingBod(false);
+        });
+      return () => { isMounted = false; };
+    }
+  }, [isOpen, phase, currentBodData, user?.id]);
+
   const normalizedTasks = useMemo(() => normalizeTasks(config), [config]);
 
   // Filter tasks visible for the current phase matching reference GS app logic
@@ -172,8 +251,8 @@ export default function BodEodFormModal({
     visibleTasks.forEach((t) => {
       if (!t || !t.taskName) return;
       const taskName = t.taskName;
-      const bodSaved = findTaskData(initialBodData, t);
-      const eodSaved = findTaskData(initialEodData, t);
+      const bodSaved = findTaskData(currentBodData, t);
+      const eodSaved = findTaskData(currentEodData, t);
       const savedData = (phase === 'BOD') ? bodSaved : eodSaved;
 
       if (t.inputType === 'dynamicList') {
@@ -325,7 +404,7 @@ export default function BodEodFormModal({
 
     setFormData(initialForm);
     setVoluntaryOpenMap(initialVolMap);
-  }, [isOpen, phase, visibleTasks, initialBodData, initialEodData]);
+  }, [isOpen, phase, visibleTasks, currentBodData, currentEodData]);
 
   // ==========================================
   // HANDLERS FOR DYNAMIC LIST
@@ -543,7 +622,7 @@ export default function BodEodFormModal({
       const taskName = t.taskName;
       const state = formData[taskName];
       if (!state) return;
-      const bodSaved = findTaskData(initialBodData, t) || {};
+      const bodSaved = findTaskData(currentBodData, t) || {};
 
       let target = (bodSaved.value !== undefined && bodSaved.value !== null && bodSaved.value !== '') ? Number(bodSaved.value) : 0;
       let achieved = 0;
@@ -587,7 +666,7 @@ export default function BodEodFormModal({
     if (scores.length === 0) return 0;
     const total = scores.reduce((a, b) => a + b, 0);
     return Math.round(total / scores.length);
-  }, [isOpen, phase, visibleTasks, formData, initialBodData, voluntaryOpenMap]);
+  }, [isOpen, phase, visibleTasks, formData, currentBodData, voluntaryOpenMap]);
 
   // ==========================================
   // SUBMIT REPORT HANDLER (Exact GS App Parity)
@@ -599,7 +678,7 @@ export default function BodEodFormModal({
 
     // Strict validation: EOD cannot be submitted without a pre-existing Morning BOD
     if (phase === 'EOD') {
-      const hasBod = initialBodData && typeof initialBodData === 'object' && Object.keys(initialBodData).length > 0;
+      const hasBod = currentBodData && typeof currentBodData === 'object' && Object.keys(currentBodData).length > 0;
       if (!hasBod) {
         setError('Morning BOD report has not been submitted for today. You must submit your Morning BOD before submitting Evening EOD.');
         setSaving(false);
@@ -741,7 +820,7 @@ export default function BodEodFormModal({
                   if (item.isVoluntary) txt += ` [Voluntary]`;
 
                   let checkHtml = '';
-                  const bodSaved = findTaskData(initialBodData, t);
+                  const bodSaved = findTaskData(currentBodData, t);
                   const bItem = (bodSaved && Array.isArray(bodSaved.list)) ? bodSaved.list.find(x => x.title === item.title) : null;
                   if (bItem && bItem.description && item.checklist) {
                     const lines = bItem.description.split('\n').filter(x => x.trim() !== '');
@@ -772,7 +851,7 @@ export default function BodEodFormModal({
             // Number or generic
             tData.value = taskState.value !== undefined ? String(taskState.value) : '';
             if (phase === 'EOD') {
-              const bodSaved = findTaskData(initialBodData, t);
+              const bodSaved = findTaskData(currentBodData, t);
               const bodTarget = bodSaved ? bodSaved.value : 'N/A';
               displayString = `Target: ${escapeHtml(bodTarget)} | Achieved: ${escapeHtml(taskState.value || '')}`;
             } else {
@@ -904,7 +983,13 @@ export default function BodEodFormModal({
               )}
 
               {/* Warning when EOD opened without pre-existing BOD */}
-              {phase === 'EOD' && (!initialBodData || Object.keys(initialBodData).length === 0) && (
+              {phase === 'EOD' && isLoadingBod && (
+                <div style={{ padding: '12px 16px', background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem', fontWeight: 600 }}>
+                  <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
+                  Checking today's Morning BOD report...
+                </div>
+              )}
+              {phase === 'EOD' && !isLoadingBod && (!currentBodData || Object.keys(currentBodData).length === 0) && (
                 <div style={{ padding: '12px 16px', background: '#fee2e2', color: '#991b1b', border: '1px solid #f87171', borderRadius: '8px', marginBottom: '16px', fontSize: '0.9rem', fontWeight: 600 }}>
                   <i className="bi bi-shield-slash-fill me-2"></i>
                   Morning BOD Required: You cannot submit an Evening EOD report because no Morning BOD plan was submitted today.
@@ -944,7 +1029,7 @@ export default function BodEodFormModal({
               {visibleTasks.map((t, i) => {
                 const taskName = t.taskName;
                 const taskState = formData[taskName] || {};
-                const bodSaved = findTaskData(initialBodData, t);
+                const bodSaved = findTaskData(currentBodData, t);
                 const hasVol = Boolean(voluntaryOpenMap[taskName]);
                 const m = (t.displayPhase === 'BOTH' || t.displayPhase === phase + '_ONLY');
                 const s = (t.inputType === 'categoryNumber' && (t.subCategoryPhase === 'BOTH' || t.subCategoryPhase === phase));
@@ -1065,93 +1150,97 @@ export default function BodEodFormModal({
                             ) : (
                               /* EOD DYNAMIC LIST */
                               <>
-                                <label className="form-label text-navy fw-bold mb-2">
-                                  Update Morning Items (Checklists & Progress)
-                                </label>
-                                <div>
-                                  {(taskState.morningItems || []).filter(Boolean).length > 0 ? (
-                                    (taskState.morningItems || []).filter(Boolean).map((mItem, bIdx) => {
-                                      const hasTar = mItem.hasTarget === true || mItem.hasTarget === 'true' || mItem.hasTarget === undefined;
-                                      const descLines = (mItem.description || '').split('\n').filter(x => x.trim() !== '');
+                                {t.displayPhase !== 'EOD_ONLY' && (
+                                  <>
+                                    <label className="form-label text-navy fw-bold mb-2">
+                                      Update Morning Items (Checklists & Progress)
+                                    </label>
+                                    <div>
+                                      {(taskState.morningItems || []).filter(Boolean).length > 0 ? (
+                                        (taskState.morningItems || []).filter(Boolean).map((mItem, bIdx) => {
+                                          const hasTar = mItem.hasTarget === true || mItem.hasTarget === 'true' || mItem.hasTarget === undefined;
+                                          const descLines = (mItem.description || '').split('\n').filter(x => x.trim() !== '');
 
-                                      return (
-                                        <div className="dyn-item-card eod-item-card" data-is-bod="true" key={bIdx}>
-                                          <div className="dyn-item-header">
-                                            <div className="d-flex align-items-center gap-2 flex-wrap">
-                                              <span className="dyn-item-badge eod-badge">#{bIdx + 1}</span>
-                                              <strong className="eod-item-title">{mItem.title || 'Morning Task'}</strong>
-                                            </div>
-                                            {mItem.time && (
-                                              <span className="badge bg-info text-dark shadow-sm">
-                                                <i className="bi bi-clock me-1"></i>{mItem.time}
-                                              </span>
-                                            )}
-                                          </div>
-
-                                          {/* Checklist Items */}
-                                          {descLines.length > 0 && (
-                                            <div className="dyn-checklist-box">
-                                              <div className="dyn-checklist-header">
-                                                <i className="bi bi-card-checklist me-1"></i> Morning Checklist:
+                                          return (
+                                            <div className="dyn-item-card eod-item-card" data-is-bod="true" key={bIdx}>
+                                              <div className="dyn-item-header">
+                                                <div className="d-flex align-items-center gap-2 flex-wrap">
+                                                  <span className="dyn-item-badge eod-badge">#{bIdx + 1}</span>
+                                                  <strong className="eod-item-title">{mItem.title || 'Morning Task'}</strong>
+                                                </div>
+                                                {mItem.time && (
+                                                  <span className="badge bg-info text-dark shadow-sm">
+                                                    <i className="bi bi-clock me-1"></i>{mItem.time}
+                                                  </span>
+                                                )}
                                               </div>
-                                              {descLines.map((line, lIdx) => {
-                                                const isDone = Boolean(mItem.checklist?.[lIdx]);
-                                                return (
-                                                  <label className={`dyn-checklist-item ${isDone ? 'checked' : ''}`} key={lIdx}>
-                                                    <input
-                                                      className="form-check-input"
-                                                      type="checkbox"
-                                                      id={`chk_${i}_${bIdx}_${lIdx}`}
-                                                      checked={isDone}
-                                                      onChange={(e) => toggleChecklistEOD(taskName, bIdx, lIdx, e.target.checked)}
-                                                    />
-                                                    <span className="dyn-checklist-text">{line}</span>
-                                                  </label>
-                                                );
-                                              })}
-                                            </div>
-                                          )}
 
-                                          <div className="dyn-progress-row">
-                                            <div className="dyn-target-pill">
-                                              <span className="dyn-pill-label">Target Mode</span>
-                                              <strong className="dyn-pill-value">{hasTar ? `Target: ${mItem.target || 1}` : 'Yes/No Task'}</strong>
-                                            </div>
-                                            <div className="dyn-achieved-box">
-                                              <label className="dyn-field-label">{hasTar ? 'Achieved Score' : 'Status'}</label>
-                                              {hasTar ? (
-                                                <input
-                                                  type="number"
-                                                  min="0"
-                                                  className="form-control dyn-achieved-input"
-                                                  placeholder="Achieved Score"
-                                                  value={mItem.achieved !== undefined ? mItem.achieved : ''}
-                                                  onChange={(e) => updateMorningFieldEOD(taskName, bIdx, 'achieved', e.target.value)}
-                                                />
-                                              ) : (
-                                                <select
-                                                  className="form-select dyn-status-select"
-                                                  value={mItem.status || 'Not Done'}
-                                                  onChange={(e) => updateMorningFieldEOD(taskName, bIdx, 'status', e.target.value)}
-                                                >
-                                                  <option value="Not Done">Not Done</option>
-                                                  <option value="Done">Done</option>
-                                                </select>
+                                              {/* Checklist Items */}
+                                              {descLines.length > 0 && (
+                                                <div className="dyn-checklist-box">
+                                                  <div className="dyn-checklist-header">
+                                                    <i className="bi bi-card-checklist me-1"></i> Morning Checklist:
+                                                  </div>
+                                                  {descLines.map((line, lIdx) => {
+                                                    const isDone = Boolean(mItem.checklist?.[lIdx]);
+                                                    return (
+                                                      <label className={`dyn-checklist-item ${isDone ? 'checked' : ''}`} key={lIdx}>
+                                                        <input
+                                                          className="form-check-input"
+                                                          type="checkbox"
+                                                          id={`chk_${i}_${bIdx}_${lIdx}`}
+                                                          checked={isDone}
+                                                          onChange={(e) => toggleChecklistEOD(taskName, bIdx, lIdx, e.target.checked)}
+                                                        />
+                                                        <span className="dyn-checklist-text">{line}</span>
+                                                      </label>
+                                                    );
+                                                  })}
+                                                </div>
                                               )}
+
+                                              <div className="dyn-progress-row">
+                                                <div className="dyn-target-pill">
+                                                  <span className="dyn-pill-label">Target Mode</span>
+                                                  <strong className="dyn-pill-value">{hasTar ? `Target: ${mItem.target || 1}` : 'Yes/No Task'}</strong>
+                                                </div>
+                                                <div className="dyn-achieved-box">
+                                                  <label className="dyn-field-label">{hasTar ? 'Achieved Score' : 'Status'}</label>
+                                                  {hasTar ? (
+                                                    <input
+                                                      type="number"
+                                                      min="0"
+                                                      className="form-control dyn-achieved-input"
+                                                      placeholder="Achieved Score"
+                                                      value={mItem.achieved !== undefined ? mItem.achieved : ''}
+                                                      onChange={(e) => updateMorningFieldEOD(taskName, bIdx, 'achieved', e.target.value)}
+                                                    />
+                                                  ) : (
+                                                    <select
+                                                      className="form-select dyn-status-select"
+                                                      value={mItem.status || 'Not Done'}
+                                                      onChange={(e) => updateMorningFieldEOD(taskName, bIdx, 'status', e.target.value)}
+                                                    >
+                                                      <option value="Not Done">Not Done</option>
+                                                      <option value="Done">Done</option>
+                                                    </select>
+                                                  )}
+                                                </div>
+                                              </div>
                                             </div>
-                                          </div>
-                                        </div>
-                                      );
-                                    })
-                                  ) : (
-                                    <div className="small text-muted py-2">No items were added in the morning.</div>
-                                  )}
-                                </div>
+                                          );
+                                        })
+                                      ) : (
+                                        <div className="small text-muted py-2">No items were added in the morning.</div>
+                                      )}
+                                    </div>
+                                  </>
+                                )}
 
                                 {/* Voluntary Extra Items Section */}
-                                <div className="mt-4 pt-3 border-top border-secondary">
+                                <div className={t.displayPhase === 'EOD_ONLY' ? "pt-1" : "mt-4 pt-3 border-top border-secondary"}>
                                   <label className="form-label text-navy fw-bold d-block mb-2">
-                                    Add Extra/Voluntary Items?
+                                    {t.displayPhase === 'EOD_ONLY' ? 'Add Extra / Completed Work Items:' : 'Add Extra/Voluntary Items?'}
                                   </label>
                                   <div className="form-check form-check-inline">
                                     <input
@@ -1425,9 +1514,9 @@ export default function BodEodFormModal({
               <button
                 type="submit"
                 className="btn btn-gold fw-bold px-4"
-                disabled={saving || visibleTasks.length === 0 || (phase === 'EOD' && (!initialBodData || Object.keys(initialBodData).length === 0))}
+                disabled={saving || isLoadingBod || visibleTasks.length === 0 || (phase === 'EOD' && (!currentBodData || Object.keys(currentBodData).length === 0))}
               >
-                {saving ? 'Submitting report...' : 'Submit Report'}
+                {saving ? 'Submitting report...' : isLoadingBod ? 'Verifying BOD...' : 'Submit Report'}
               </button>
             </div>
           </form>

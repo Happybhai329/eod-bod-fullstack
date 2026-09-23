@@ -8,12 +8,15 @@ function formatScoreNum(val) {
   return `${Math.round(n)}%`;
 }
 
-export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfig, onOpenFine, onOpenKraSop, onOpenStructure, onOpenDetail }) {
+export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfig, onOpenFine, onOpenKraSop, onOpenStructure, onOpenDetail, refreshTrigger }) {
   const [filter, setFilter] = useState('Weekly');
   const [data, setData] = useState({ overallAverage: 0, topPerformer: 'N/A', needsAttention: 'N/A', reports: [], managedEmployees: [] });
   const [loading, setLoading] = useState(false);
   const [ratingInputs, setRatingInputs] = useState({});
   const [myTaskConfig, setMyTaskConfig] = useState([]);
+  const [myTodayStatus, setMyTodayStatus] = useState({ bodFilled: false, eodFilled: false, bodEditable: false, eodEditable: false });
+  const [myBodData, setMyBodData] = useState(null);
+  const [myEodData, setMyEodData] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
   const [syncStatus, setSyncStatus] = useState({ isSyncing: false, lastSyncTime: null, lastSyncStatus: 'IDLE' });
@@ -34,9 +37,9 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
 
   useEffect(() => {
     fetchHeadDashboard();
-    fetchMyConfig();
+    fetchMyWorkday();
     fetchSyncStatus();
-  }, [user.id, filter]);
+  }, [user.id, filter, refreshTrigger]);
 
   const fetchSyncStatus = async () => {
     try {
@@ -96,13 +99,26 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
     }
   };
 
-  const fetchMyConfig = async () => {
+  const fetchMyWorkday = async () => {
     try {
-      const res = await fetch(`/api/config/${user.id}`);
+      const res = await fetch(`/api/employee/${user.id}/form`);
       const result = await res.json();
-      if (result.success) setMyTaskConfig(result.config || []);
+      if (result.success) {
+        setMyTodayStatus(result.todayStatus || { bodFilled: false, eodFilled: false, bodEditable: false, eodEditable: false });
+        let parsedBod = result.bodData;
+        if (typeof parsedBod === 'string') {
+          try { parsedBod = JSON.parse(parsedBod); } catch (e) {}
+        }
+        let parsedEod = result.eodData;
+        if (typeof parsedEod === 'string') {
+          try { parsedEod = JSON.parse(parsedEod); } catch (e) {}
+        }
+        setMyBodData(parsedBod);
+        setMyEodData(parsedEod);
+        setMyTaskConfig(result.config || []);
+      }
     } catch (err) {
-      console.error(err);
+      console.error('[HeadDashboard] Failed to fetch workday status:', err);
     }
   };
 
@@ -329,16 +345,44 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
               <i className="bi bi-person-badge text-primary me-1"></i> My Own Work (Head Submissions)
             </h2>
             <p className="section-description">Configure and submit your own morning BOD and evening EOD reports as {user.name}.</p>
+            <div className="d-flex align-items-center gap-2 mt-2 flex-wrap">
+              <span className={`badge ${myTodayStatus.bodFilled ? 'bg-success' : 'bg-warning text-dark'}`}>
+                <i className={`bi ${myTodayStatus.bodFilled ? 'bi-check-circle-fill' : 'bi-clock'} me-1`}></i>
+                BOD: {myTodayStatus.bodFilled ? 'Submitted' : 'Pending'}
+              </span>
+              <span className={`badge ${myTodayStatus.eodFilled ? 'bg-success' : myTodayStatus.bodFilled ? 'bg-primary' : 'bg-secondary'}`}>
+                <i className={`bi ${myTodayStatus.eodFilled ? 'bi-check-circle-fill' : myTodayStatus.bodFilled ? 'bi-unlock-fill' : 'bi-lock-fill'} me-1`}></i>
+                EOD: {myTodayStatus.eodFilled ? 'Submitted' : myTodayStatus.bodFilled ? 'Ready to Submit' : 'Locked (BOD First)'}
+              </span>
+            </div>
           </div>
           <div className="filter-pills">
             <button className="btn-pill" onClick={() => onOpenConfig(user.id, user.name)}>
               <i className="bi bi-gear me-1"></i> Manage My Tasks
             </button>
-            <button className="btn-pill" onClick={() => onOpenForm('BOD', myTaskConfig, null, null)}>
-              <i className="bi bi-sun me-1"></i> Open My BOD
+            <button
+              className="btn-pill"
+              onClick={() => onOpenForm('BOD', myTaskConfig, myBodData, myEodData)}
+            >
+              <i className="bi bi-sun me-1"></i> {myTodayStatus.bodFilled ? 'Edit My BOD' : 'Open My BOD'}
             </button>
-            <button className="btn-pill" onClick={() => onOpenForm('EOD', myTaskConfig, null, null)}>
-              <i className="bi bi-moon-stars me-1"></i> Open My EOD
+            <button
+              className="btn-pill"
+              disabled={!myTodayStatus.bodFilled}
+              style={{
+                opacity: !myTodayStatus.bodFilled ? 0.6 : 1,
+                cursor: !myTodayStatus.bodFilled ? 'not-allowed' : 'pointer'
+              }}
+              title={!myTodayStatus.bodFilled ? 'Morning BOD must be submitted before Evening EOD unlocks' : 'Open Evening EOD Form'}
+              onClick={() => {
+                if (!myTodayStatus.bodFilled) {
+                  if (showToast) showToast('Please submit your Morning BOD plan first.', 'warning');
+                  return;
+                }
+                onOpenForm('EOD', myTaskConfig, myBodData, myEodData);
+              }}
+            >
+              <i className="bi bi-moon-stars me-1"></i> {myTodayStatus.eodFilled ? 'Edit My EOD' : 'Open My EOD'}
             </button>
           </div>
         </div>

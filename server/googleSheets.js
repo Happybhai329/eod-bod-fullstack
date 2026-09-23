@@ -685,8 +685,12 @@ export async function syncDailyReportToSheets(report) {
   // This prevents Google Sheets from converting DD/MM/YYYY into an Excel serial number like 46277
   const formattedDate = targetDate.startsWith("'") ? targetDate : `'${targetDate}`;
   const formattedLastUpdated = formatIndianDateTime(report.last_updated || new Date());
-
   const hasEod = Boolean(report.eod_data && report.eod_data !== '' && report.eod_data !== '{}' && report.eod_data !== 'null');
+  const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
+  const isTodayReport = targetDate === todayDateStr;
+  const safeApprovalStatus = hasEod
+    ? mergeVal(report.approval_status, 13, 'Pending Review')
+    : (isTodayReport ? mergeVal(report.approval_status, 13, 'Pending EOD') : 'EOD Missed');
 
   const rowValues = [
     formattedDate,                                                  // 0: Date
@@ -702,7 +706,7 @@ export async function syncDailyReportToSheets(report) {
     mergeVal(report.overtime, 10, 0),                               // 10: Overtime
     mergeVal(report.rating_last_updated ? formatIndianDateTime(report.rating_last_updated) : '', 11), // 11: Rating_Last_Updated
     mergeVal(report.rating_edited_by, 12),                          // 12: Rating_Edited_By
-    hasEod ? mergeVal(report.approval_status, 13, 'Pending Review') : 'EOD Missed',         // 13: Approval_Status
+    safeApprovalStatus,                                             // 13: Approval_Status
     mergeVal(report.approval_timestamp ? formatIndianDateTime(report.approval_timestamp) : '', 14),   // 14: Approval_Timestamp
     mergeVal(report.expiry_timestamp ? formatIndianDateTime(report.expiry_timestamp) : '', 15),       // 15: Expiry_Timestamp
     mergeVal(report.rated_by, 16),                                  // 16: Rated_By
