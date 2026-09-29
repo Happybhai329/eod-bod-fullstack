@@ -242,16 +242,15 @@ export async function syncInbound() {
           const safeEod = (r.eod_data && r.eod_data !== '') ? safeJsonString(r.eod_data) : (existing?.eod_data || null);
           const hasEod = Boolean(safeEod && safeEod !== '' && safeEod !== '{}' && safeEod !== 'null');
 
-          const safeSysScore = hasEod ? sanitizeScore(r.system_score != null ? r.system_score : (existing?.system_score ?? null)) : null;
-          const safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? null)) : null;
-          const safeFinalScore = hasEod ? sanitizeScore(r.final_score != null ? r.final_score : (existing?.final_score ?? null)) : null;
-          const safeAttendance = r.attendance || existing?.attendance || 'Present';
-          const safeOvertime = r.overtime ?? existing?.overtime ?? 0;
-          const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
-          const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
           const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
           const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
           let safeApprovalStatus = r.approval_status || existing?.approval_status;
+          
+          // Safeguard: Never allow stale "Pending Review" from Google Sheets to overwrite an existing "Auto Approved" or "Approved" report
+          if ((existing?.approval_status === 'Auto Approved' || existing?.approval_status === 'Approved') && r.approval_status === 'Pending Review') {
+            safeApprovalStatus = existing.approval_status;
+          }
+
           if (!safeApprovalStatus) {
             safeApprovalStatus = hasEod ? 'Pending Review' : (isTodayReport ? 'Pending EOD' : 'EOD Missed');
           } else if (!hasEod) {
@@ -265,10 +264,11 @@ export async function syncInbound() {
               }
             }
           }
-          const safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
-          const safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
-          const safeRatedBy = r.rated_by || existing?.rated_by || null;
-          const safeRatedOn = r.rated_on || existing?.rated_on || null;
+
+          const safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' ? 100 : null))) : null;
+          const safeFinalScore = hasEod ? sanitizeScore(r.final_score != null ? r.final_score : (existing?.final_score ?? safeSysScore)) : null;
+          const safeRatedBy = r.rated_by || existing?.rated_by || (safeApprovalStatus === 'Auto Approved' ? 'System (Auto Approval)' : null);
+          const safeRatedOn = r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null);
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
           const safeFineReason = r.fine_reason || existing?.fine_reason || null;
           const safeFineDocUrl = r.fine_doc_url || existing?.fine_doc_url || null;
@@ -413,7 +413,7 @@ export async function syncOutbound() {
       const hasEod = Boolean(r.eod_data && r.eod_data !== '' && r.eod_data !== '{}' && r.eod_data !== 'null');
 
       const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
-      const isTodayReport = (targetDate === todayDateStr || r.date === todayDateStr || r.reportDate === todayDateStr);
+      const isTodayReport = (normDate === todayDateStr || r.date === todayDateStr || r.reportDate === todayDateStr);
       const safeOutboundStatus = hasEod
         ? mergeOutboundVal(r.approval_status, 13, 'Pending Review')
         : (isTodayReport ? mergeOutboundVal(r.approval_status, 13, 'Pending EOD') : 'EOD Missed');
@@ -448,10 +448,17 @@ export async function syncOutbound() {
       ];
 
       if (existing) {
-        // Push only if DB is strictly newer than Sheet
+        // Push if DB is strictly newer than Sheet, OR if approval status / ratings differ
         const dbTs = toTimestampMs(r.last_updated);
         const sheetTs = toTimestampMs(existing.lastUpdated);
-        if (dbTs > sheetTs) {
+        const sheetStatus = existing.rowData ? (existing.rowData[13] || '') : '';
+        const sheetHeadRating = existing.rowData ? String(existing.rowData[7] ?? '') : '';
+        const dbHeadRating = r.head_rating != null ? String(r.head_rating) : '';
+        
+        const statusChanged = safeOutboundStatus && safeOutboundStatus !== sheetStatus;
+        const ratingChanged = dbHeadRating !== '' && dbHeadRating !== sheetHeadRating;
+
+        if (dbTs > sheetTs || statusChanged || ratingChanged) {
           batchUpdates.push({
             range: `Daily_Reports!A${existing.rowNum}:Z${existing.rowNum}`,
             values: [rowValues]

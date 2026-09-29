@@ -16,7 +16,7 @@ import {
   submitAssignedTask
 } from './googleSheets.js';
 import { startAutoSync, runTwoWaySync, getSyncStatus } from './syncEngine.js';
-import { checkAutoApprovals } from './autoApproval.js';
+import { checkAutoApprovals, checkEmployeeAutoApprovals } from './autoApproval.js';
 import {
   calculatePerformance,
   calculateFinalScore,
@@ -554,10 +554,10 @@ app.post('/api/employee/:id/report', async (req, res) => {
 // -------------------------------------------------------------
 app.get('/api/employee/:id/dashboard', async (req, res) => {
   try {
-    await checkAutoApprovals();
     const empId = req.params.id;
     const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     const effectiveId = emp ? (emp.emp_id || emp.id) : empId;
+    await checkEmployeeAutoApprovals(effectiveId);
     const { filter = 'Weekly' } = req.query;
 
     const allReports = await query(
