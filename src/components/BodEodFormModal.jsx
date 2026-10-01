@@ -214,9 +214,9 @@ export default function BodEodFormModal({
       return m || s;
     });
 
-    // In EOD phase: ensure any tasks submitted in Morning BOD are ALWAYS visible in EOD,
+    // Ensure any tasks submitted in Morning BOD are ALWAYS visible in BOTH BOD and EOD phases,
     // even if they do not match the current normalizedTasks (e.g. submitted under fallback name or renamed tasks).
-    if (phase === 'EOD' && currentBodData && typeof currentBodData === 'object') {
+    if (currentBodData && typeof currentBodData === 'object') {
       const orphanTasks = [];
       const bodKeys = Object.keys(currentBodData);
 
