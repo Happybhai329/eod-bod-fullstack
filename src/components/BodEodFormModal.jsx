@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import AssignedTasksPanel from './AssignedTasksPanel';
 import ErrorBoundary from './ErrorBoundary';
 
@@ -102,6 +102,35 @@ export function normalizeTasks(rawConfig) {
   });
 }
 
+/**
+ * Helper to find existing task data from bod/eod payloads.
+ * Pure utility function placed at module scope to prevent TDZ issues.
+ */
+export function findTaskData(dataObj, t) {
+  if (!dataObj || !t) return null;
+  let obj = dataObj;
+  if (typeof obj === 'string') {
+    try { obj = JSON.parse(obj); } catch (e) { return null; }
+  }
+  if (typeof obj !== 'object' || obj === null) return null;
+
+  if (t.taskName && obj[t.taskName] !== undefined) return obj[t.taskName];
+  if (t.key && obj[t.key] !== undefined) return obj[t.key];
+
+  // Case-insensitive, trimmed, and singular/plural fallback search (e.g. 'OTHER WORK' vs 'OTHER WORKS')
+  const targetName = (t.taskName || t.key || '').trim().toLowerCase();
+  if (!targetName) return null;
+  const targetSingular = targetName.replace(/s$/, '');
+
+  for (const k of Object.keys(obj)) {
+    const normK = k.trim().toLowerCase();
+    if (normK === targetName || normK.replace(/s$/, '') === targetSingular) {
+      return obj[k];
+    }
+  }
+  return null;
+}
+
 export default function BodEodFormModal({
   isOpen,
   onClose,
@@ -146,17 +175,25 @@ export default function BodEodFormModal({
     }
   }, [config]);
 
-  // Self-healing fallback: If config or BOD is missing when modal opens, fetch fresh from server!
-  useEffect(() => {
-    if (!isOpen || !user?.id) return;
+  const hasFetchedRef = useRef(false);
 
-    const needsConfig = !modalConfig || modalConfig.length === 0;
+  // Self-healing fallback: If config or BOD is missing when modal opens, fetch fresh from server once!
+  useEffect(() => {
+    if (!isOpen) {
+      hasFetchedRef.current = false;
+      return;
+    }
+
+    if (hasFetchedRef.current || !user?.id) return;
+    hasFetchedRef.current = true;
+
+    const hasConfig = Array.isArray(modalConfig) && modalConfig.length > 0;
     const hasBod = currentBodData && typeof currentBodData === 'object' && Object.keys(currentBodData).length > 0;
     const needsBod = phase === 'EOD' && !hasBod;
 
-    if (needsConfig || needsBod) {
+    if (!hasConfig || needsBod) {
       let isMounted = true;
-      if (needsConfig) setIsLoadingConfig(true);
+      if (!hasConfig) setIsLoadingConfig(true);
       if (needsBod) setIsLoadingBod(true);
 
       fetch(`/api/employee/${user.id}/form`)
@@ -164,7 +201,7 @@ export default function BodEodFormModal({
         .then(data => {
           if (!isMounted) return;
           if (data.success) {
-            if (needsConfig) {
+            if (!hasConfig && data.config) {
               setModalConfig(Array.isArray(data.config) ? data.config : []);
             }
             if (data.bodData) {
@@ -196,7 +233,7 @@ export default function BodEodFormModal({
         });
       return () => { isMounted = false; };
     }
-  }, [isOpen, phase, user?.id, modalConfig, currentBodData]);
+  }, [isOpen, phase, user?.id]);
 
   const normalizedTasks = useMemo(() => {
     if (isLoadingConfig || modalConfig === null) return [];
@@ -261,32 +298,6 @@ export default function BodEodFormModal({
 
     return baseTasks;
   }, [normalizedTasks, phase, currentBodData, isLoadingConfig, modalConfig]);
-
-  // Helper to find existing task data from bod/eod payloads
-  const findTaskData = (dataObj, t) => {
-    if (!dataObj || !t) return null;
-    let obj = dataObj;
-    if (typeof obj === 'string') {
-      try { obj = JSON.parse(obj); } catch (e) { return null; }
-    }
-    if (typeof obj !== 'object' || obj === null) return null;
-
-    if (t.taskName && obj[t.taskName] !== undefined) return obj[t.taskName];
-    if (t.key && obj[t.key] !== undefined) return obj[t.key];
-
-    // Case-insensitive, trimmed, and singular/plural fallback search (e.g. 'OTHER WORK' vs 'OTHER WORKS')
-    const targetName = (t.taskName || t.key || '').trim().toLowerCase();
-    if (!targetName) return null;
-    const targetSingular = targetName.replace(/s$/, '');
-
-    for (const k of Object.keys(obj)) {
-      const normK = k.trim().toLowerCase();
-      if (normK === targetName || normK.replace(/s$/, '') === targetSingular) {
-        return obj[k];
-      }
-    }
-    return null;
-  };
 
   useEffect(() => {
     if (!isOpen || isLoadingConfig) {

@@ -158,46 +158,12 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
     return <span className="badge badge-pending">Pending Review</span>;
   };
 
-  const handleOpenBod = async () => {
-    let cfg = config;
-    let b = bodData;
-    let e = eodData;
-    if ((!cfg || cfg.length === 0) && user?.id) {
-      try {
-        const res = await fetch(`/api/employee/${user.id}/form`);
-        const d = await res.json();
-        if (d.success) {
-          if (d.config && d.config.length > 0) {
-            cfg = d.config;
-            setConfig(cfg);
-          }
-          if (d.bodData) { b = d.bodData; setBodData(b); }
-          if (d.eodData) { e = d.eodData; setEodData(e); }
-        }
-      } catch (err) {}
-    }
-    onOpenForm('BOD', cfg, b, e);
+  const handleOpenBod = () => {
+    onOpenForm('BOD', config, bodData, eodData);
   };
 
-  const handleOpenEod = async () => {
-    let cfg = config;
-    let b = bodData;
-    let e = eodData;
-    if ((!cfg || cfg.length === 0) && user?.id) {
-      try {
-        const res = await fetch(`/api/employee/${user.id}/form`);
-        const d = await res.json();
-        if (d.success) {
-          if (d.config && d.config.length > 0) {
-            cfg = d.config;
-            setConfig(cfg);
-          }
-          if (d.bodData) { b = d.bodData; setBodData(b); }
-          if (d.eodData) { e = d.eodData; setEodData(e); }
-        }
-      } catch (err) {}
-    }
-    onOpenForm('EOD', cfg, b, e);
+  const handleOpenEod = () => {
+    onOpenForm('EOD', config, bodData, eodData);
   };
 
   return (

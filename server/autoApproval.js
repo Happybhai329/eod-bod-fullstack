@@ -27,7 +27,7 @@ import {
   parseScoreHelper,
   DEFAULT_HEAD_RATING
 } from './scoringEngine.js';
-import { parseTimestampSafe, syncDailyReportToSheets } from './googleSheets.js';
+import { parseTimestampSafe } from './googleSheets.js';
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const AUTO_APPROVAL_THROTTLE_MS = 30 * 1000; // Run at most once every 30 seconds
@@ -132,21 +132,6 @@ async function processCandidateReports(reports, now) {
         );
       } catch (notifErr) {
         // Ignore notification insert error
-      }
-
-      // Outbound sync to Google Sheets (fire-and-forget single report)
-      try {
-        const updated = await get(
-          `SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`,
-          [r.date, r.employee_id]
-        );
-        if (updated) {
-          syncDailyReportToSheets(updated).catch(err => {
-            console.warn('[Auto Approval] Sheet sync notice (ignored):', err.message);
-          });
-        }
-      } catch (syncErr) {
-        // Ignore fetch error
       }
 
       autoApprovedCount++;

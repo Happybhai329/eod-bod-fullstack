@@ -313,7 +313,8 @@ app.post('/api/structure/remove', async (req, res) => {
 // -------------------------------------------------------------
 app.get('/api/employee/:id/form', async (req, res) => {
   try {
-    await checkAutoApprovals();
+    // Non-blocking auto-approval check in background
+    checkAutoApprovals().catch(err => console.warn('[Auto Approval] Background check notice:', err.message));
     const empId = req.params.id;
     const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found or inactive.' });

@@ -122,50 +122,16 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
     }
   };
 
-  const handleOpenMyBod = async () => {
-    let cfg = myTaskConfig;
-    let b = myBodData;
-    let e = myEodData;
-    if ((!cfg || cfg.length === 0) && user?.id) {
-      try {
-        const res = await fetch(`/api/employee/${user.id}/form`);
-        const d = await res.json();
-        if (d.success) {
-          if (d.config && d.config.length > 0) {
-            cfg = d.config;
-            setMyTaskConfig(cfg);
-          }
-          if (d.bodData) { b = d.bodData; setMyBodData(b); }
-          if (d.eodData) { e = d.eodData; setMyEodData(e); }
-        }
-      } catch (err) {}
-    }
-    onOpenForm('BOD', cfg, b, e);
+  const handleOpenMyBod = () => {
+    onOpenForm('BOD', myTaskConfig, myBodData, myEodData);
   };
 
-  const handleOpenMyEod = async () => {
+  const handleOpenMyEod = () => {
     if (!myTodayStatus.bodFilled) {
       if (showToast) showToast('Please submit your Morning BOD plan first.', 'warning');
       return;
     }
-    let cfg = myTaskConfig;
-    let b = myBodData;
-    let e = myEodData;
-    if ((!cfg || cfg.length === 0) && user?.id) {
-      try {
-        const res = await fetch(`/api/employee/${user.id}/form`);
-        const d = await res.json();
-        if (d.success) {
-          if (d.config && d.config.length > 0) {
-            cfg = d.config;
-            setMyTaskConfig(cfg);
-          }
-          if (d.bodData) { b = d.bodData; setMyBodData(b); }
-          if (d.eodData) { e = d.eodData; setMyEodData(e); }
-        }
-      } catch (err) {}
-    }
-    onOpenForm('EOD', cfg, b, e);
+    onOpenForm('EOD', myTaskConfig, myBodData, myEodData);
   };
 
   const handleRatingChange = (reportKey, field, val) => {
