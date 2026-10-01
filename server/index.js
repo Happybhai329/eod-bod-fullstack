@@ -153,22 +153,50 @@ function isDateInFilter(dateStr, filter) {
 
 
 // -------------------------------------------------------------
-// HEALTH CHECK ROUTE (Render & Cloud Monitoring)
+// HEALTH CHECK ROUTES (For UptimeRobot, Render, & Cloud Monitoring)
+// Keeps Render web service alive and responsive 24/7
+// Endpoints supported: /health, /healthz, /ping, /api/health
+// Methods: GET, HEAD, OPTIONS
 // -------------------------------------------------------------
-app.get('/api/health', async (req, res) => {
-  try {
-    const empCount = await query(`SELECT COUNT(*) as count FROM employees`);
-    res.json({
-      status: 'healthy',
-      uptime: process.uptime(),
-      timestamp: new Date().toISOString(),
-      database: 'connected',
-      employees: empCount[0]?.count || 0
-    });
-  } catch (err) {
-    res.status(500).json({ status: 'unhealthy', error: err.message });
+const healthHandler = async (req, res) => {
+  // If plain text requested (e.g. basic ping bot)
+  if (req.query.format === 'text' || (req.path === '/ping' && !req.headers.accept?.includes('application/json'))) {
+    return res.status(200).type('text/plain').send('OK');
   }
-});
+
+  let dbStatus = 'connected';
+  let empCount = 0;
+
+  // Perform quick DB health check only if requested or if path is /api/health
+  // (Avoids DB connection overhead when UptimeRobot pings every few minutes)
+  if (req.path === '/api/health' || req.query.checkDb === 'true') {
+    try {
+      const rows = await query(`SELECT COUNT(*) as count FROM employees`);
+      empCount = rows[0]?.count || 0;
+    } catch (err) {
+      dbStatus = `degraded: ${err.message}`;
+    }
+  }
+
+  const uptimeSec = Math.floor(process.uptime());
+  const hours = Math.floor(uptimeSec / 3600);
+  const minutes = Math.floor((uptimeSec % 3600) / 60);
+  const seconds = uptimeSec % 60;
+  const uptimeHuman = `${hours}h ${minutes}m ${seconds}s`;
+
+  return res.status(200).json({
+    status: 'healthy',
+    message: 'EOD/BOD Operations Hub server is running and active.',
+    service: 'eod-bod-fullstack',
+    timestamp: new Date().toISOString(),
+    uptime: uptimeHuman,
+    uptimeSeconds: uptimeSec,
+    database: dbStatus,
+    ...(empCount > 0 ? { employeeCount: empCount } : {})
+  });
+};
+
+app.all(['/health', '/healthz', '/ping', '/api/health'], healthHandler);
 
 // -------------------------------------------------------------
 // AUTH ROUTES
