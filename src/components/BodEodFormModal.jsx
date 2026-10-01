@@ -136,49 +136,45 @@ export default function BodEodFormModal({
     return initialEodData;
   });
 
+  const [modalConfig, setModalConfig] = useState(() => (Array.isArray(config) && config.length > 0 ? config : null));
+  const [isLoadingConfig, setIsLoadingConfig] = useState(false);
   const [isLoadingBod, setIsLoadingBod] = useState(false);
 
   useEffect(() => {
-    if (initialBodData) {
-      let b = initialBodData;
-      if (typeof b === 'string') {
-        try { b = JSON.parse(b); } catch (e) {}
-      }
-      setCurrentBodData(b);
-    } else {
-      setCurrentBodData(null);
+    if (Array.isArray(config) && config.length > 0) {
+      setModalConfig(config);
     }
-  }, [initialBodData]);
+  }, [config]);
 
+  // Self-healing fallback: If config or BOD is missing when modal opens, fetch fresh from server!
   useEffect(() => {
-    if (initialEodData) {
-      let ed = initialEodData;
-      if (typeof ed === 'string') {
-        try { ed = JSON.parse(ed); } catch (e) {}
-      }
-      setCurrentEodData(ed);
-    } else {
-      setCurrentEodData(null);
-    }
-  }, [initialEodData]);
+    if (!isOpen || !user?.id) return;
 
-  // Self-healing fallback: If EOD is opened without BOD in props, verify with server immediately!
-  useEffect(() => {
+    const needsConfig = !modalConfig || modalConfig.length === 0;
     const hasBod = currentBodData && typeof currentBodData === 'object' && Object.keys(currentBodData).length > 0;
-    if (isOpen && phase === 'EOD' && !hasBod && user?.id) {
+    const needsBod = phase === 'EOD' && !hasBod;
+
+    if (needsConfig || needsBod) {
       let isMounted = true;
-      setIsLoadingBod(true);
+      if (needsConfig) setIsLoadingConfig(true);
+      if (needsBod) setIsLoadingBod(true);
+
       fetch(`/api/employee/${user.id}/form`)
         .then(res => res.json())
         .then(data => {
           if (!isMounted) return;
           if (data.success) {
-            let b = data.bodData;
-            if (typeof b === 'string') {
-              try { b = JSON.parse(b); } catch (e) {}
+            if (needsConfig) {
+              setModalConfig(Array.isArray(data.config) ? data.config : []);
             }
-            if (b && typeof b === 'object' && Object.keys(b).length > 0) {
-              setCurrentBodData(b);
+            if (data.bodData) {
+              let b = data.bodData;
+              if (typeof b === 'string') {
+                try { b = JSON.parse(b); } catch (e) {}
+              }
+              if (b && typeof b === 'object' && Object.keys(b).length > 0) {
+                setCurrentBodData(b);
+              }
             }
             if (data.eodData && (!currentEodData || Object.keys(currentEodData).length === 0)) {
               let ed = data.eodData;
@@ -193,23 +189,78 @@ export default function BodEodFormModal({
           console.warn('[BodEodFormModal] Fallback fetch failed:', err);
         })
         .finally(() => {
-          if (isMounted) setIsLoadingBod(false);
+          if (isMounted) {
+            setIsLoadingConfig(false);
+            setIsLoadingBod(false);
+          }
         });
       return () => { isMounted = false; };
     }
-  }, [isOpen, phase, currentBodData, user?.id]);
+  }, [isOpen, phase, user?.id, modalConfig, currentBodData]);
 
-  const normalizedTasks = useMemo(() => normalizeTasks(config), [config]);
+  const normalizedTasks = useMemo(() => {
+    if (isLoadingConfig || modalConfig === null) return [];
+    return normalizeTasks(modalConfig);
+  }, [modalConfig, isLoadingConfig]);
 
   // Filter tasks visible for the current phase matching reference GS app logic
   const visibleTasks = useMemo(() => {
-    return (normalizedTasks || []).filter(t => {
+    if (isLoadingConfig || modalConfig === null) return [];
+
+    const baseTasks = (normalizedTasks || []).filter(t => {
       if (!t) return false;
       const m = (t.displayPhase === 'BOTH' || t.displayPhase === phase + '_ONLY');
       const s = (t.inputType === 'categoryNumber' && (t.subCategoryPhase === 'BOTH' || t.subCategoryPhase === phase));
       return m || s;
     });
-  }, [normalizedTasks, phase]);
+
+    // In EOD phase: ensure any tasks submitted in Morning BOD are ALWAYS visible in EOD,
+    // even if they do not match the current normalizedTasks (e.g. submitted under fallback name or renamed tasks).
+    if (phase === 'EOD' && currentBodData && typeof currentBodData === 'object') {
+      const orphanTasks = [];
+      const bodKeys = Object.keys(currentBodData);
+
+      for (const rawKey of bodKeys) {
+        if (!rawKey || rawKey.startsWith('_')) continue;
+        const key = rawKey.trim();
+        const bodVal = currentBodData[rawKey];
+        if (!bodVal) continue;
+
+        // Check if any task in baseTasks already claims this morning section
+        const matched = baseTasks.some(bt => {
+          const found = findTaskData({ [rawKey]: bodVal }, bt);
+          return Boolean(found);
+        });
+
+        if (!matched) {
+          // Check if this morning section has any content
+          const rawList = bodVal?.list || (Array.isArray(bodVal) ? bodVal : null);
+          const hasListItems = Array.isArray(rawList) && rawList.length > 0;
+          const hasCategories = bodVal?.subCategories && Object.keys(bodVal.subCategories).length > 0;
+          const hasValue = bodVal?.value !== undefined && bodVal?.value !== '';
+
+          if (hasListItems || hasCategories || hasValue) {
+            orphanTasks.push({
+              taskName: key,
+              key: key,
+              inputType: hasCategories ? 'categoryNumber' : 'dynamicList',
+              displayPhase: 'BOTH',
+              subCategories: hasCategories ? Object.keys(bodVal.subCategories) : ['General'],
+              subCategoryPhase: 'EOD',
+              target: 1,
+              description: 'Morning BOD Items'
+            });
+          }
+        }
+      }
+
+      if (orphanTasks.length > 0) {
+        return [...baseTasks, ...orphanTasks];
+      }
+    }
+
+    return baseTasks;
+  }, [normalizedTasks, phase, currentBodData, isLoadingConfig, modalConfig]);
 
   // Helper to find existing task data from bod/eod payloads
   const findTaskData = (dataObj, t) => {
@@ -238,7 +289,7 @@ export default function BodEodFormModal({
   };
 
   useEffect(() => {
-    if (!isOpen) {
+    if (!isOpen || isLoadingConfig) {
       setShareModalOpen(false);
       setCopied(false);
       setError('');
@@ -404,7 +455,7 @@ export default function BodEodFormModal({
 
     setFormData(initialForm);
     setVoluntaryOpenMap(initialVolMap);
-  }, [isOpen, phase, visibleTasks, currentBodData, currentEodData]);
+  }, [isOpen, phase, visibleTasks, currentBodData, currentEodData, isLoadingConfig]);
 
   // ==========================================
   // HANDLERS FOR DYNAMIC LIST
@@ -1025,8 +1076,17 @@ export default function BodEodFormModal({
                 <AssignedTasksPanel empId={user?.id || user?.emp_id} isModal={true} />
               </ErrorBoundary>
 
+              {/* Loading Config Spinner */}
+              {isLoadingConfig && (
+                <div style={{ padding: '36px', textAlign: 'center', background: '#fff', borderRadius: '12px', border: '1px solid #e2e8f0', margin: '20px 0' }}>
+                  <div className="spinner-border text-primary mb-3" style={{ width: '2.5rem', height: '2.5rem' }} role="status"></div>
+                  <h6 className="fw-bold text-navy" style={{ marginBottom: '6px' }}>Loading Your Task Configuration...</h6>
+                  <p className="text-muted small mb-0">Retrieving your personalized sections and schedule.</p>
+                </div>
+              )}
+
               {/* Render visible tasks */}
-              {visibleTasks.map((t, i) => {
+              {!isLoadingConfig && visibleTasks.map((t, i) => {
                 const taskName = t.taskName;
                 const taskState = formData[taskName] || {};
                 const bodSaved = findTaskData(currentBodData, t);
@@ -1499,7 +1559,7 @@ export default function BodEodFormModal({
                 );
               })}
 
-              {visibleTasks.length === 0 && (
+              {!isLoadingConfig && visibleTasks.length === 0 && (
                 <div className="h5 text-center text-muted mt-4">
                   No daily tasks configured.
                 </div>
@@ -1514,9 +1574,9 @@ export default function BodEodFormModal({
               <button
                 type="submit"
                 className="btn btn-gold fw-bold px-4"
-                disabled={saving || isLoadingBod || visibleTasks.length === 0 || (phase === 'EOD' && (!currentBodData || Object.keys(currentBodData).length === 0))}
+                disabled={saving || isLoadingBod || isLoadingConfig || visibleTasks.length === 0 || (phase === 'EOD' && (!currentBodData || Object.keys(currentBodData).length === 0))}
               >
-                {saving ? 'Submitting report...' : isLoadingBod ? 'Verifying BOD...' : 'Submit Report'}
+                {saving ? 'Submitting report...' : isLoadingBod ? 'Verifying BOD...' : isLoadingConfig ? 'Loading Sections...' : 'Submit Report'}
               </button>
             </div>
           </form>

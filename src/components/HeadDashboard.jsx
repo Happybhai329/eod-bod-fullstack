@@ -122,6 +122,52 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
     }
   };
 
+  const handleOpenMyBod = async () => {
+    let cfg = myTaskConfig;
+    let b = myBodData;
+    let e = myEodData;
+    if ((!cfg || cfg.length === 0) && user?.id) {
+      try {
+        const res = await fetch(`/api/employee/${user.id}/form`);
+        const d = await res.json();
+        if (d.success) {
+          if (d.config && d.config.length > 0) {
+            cfg = d.config;
+            setMyTaskConfig(cfg);
+          }
+          if (d.bodData) { b = d.bodData; setMyBodData(b); }
+          if (d.eodData) { e = d.eodData; setMyEodData(e); }
+        }
+      } catch (err) {}
+    }
+    onOpenForm('BOD', cfg, b, e);
+  };
+
+  const handleOpenMyEod = async () => {
+    if (!myTodayStatus.bodFilled) {
+      if (showToast) showToast('Please submit your Morning BOD plan first.', 'warning');
+      return;
+    }
+    let cfg = myTaskConfig;
+    let b = myBodData;
+    let e = myEodData;
+    if ((!cfg || cfg.length === 0) && user?.id) {
+      try {
+        const res = await fetch(`/api/employee/${user.id}/form`);
+        const d = await res.json();
+        if (d.success) {
+          if (d.config && d.config.length > 0) {
+            cfg = d.config;
+            setMyTaskConfig(cfg);
+          }
+          if (d.bodData) { b = d.bodData; setMyBodData(b); }
+          if (d.eodData) { e = d.eodData; setMyEodData(e); }
+        }
+      } catch (err) {}
+    }
+    onOpenForm('EOD', cfg, b, e);
+  };
+
   const handleRatingChange = (reportKey, field, val) => {
     setRatingInputs(prev => ({
       ...prev,
@@ -362,7 +408,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
             </button>
             <button
               className="btn-pill"
-              onClick={() => onOpenForm('BOD', myTaskConfig, myBodData, myEodData)}
+              onClick={handleOpenMyBod}
             >
               <i className="bi bi-sun me-1"></i> {myTodayStatus.bodFilled ? 'Edit My BOD' : 'Open My BOD'}
             </button>
@@ -374,13 +420,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
                 cursor: !myTodayStatus.bodFilled ? 'not-allowed' : 'pointer'
               }}
               title={!myTodayStatus.bodFilled ? 'Morning BOD must be submitted before Evening EOD unlocks' : 'Open Evening EOD Form'}
-              onClick={() => {
-                if (!myTodayStatus.bodFilled) {
-                  if (showToast) showToast('Please submit your Morning BOD plan first.', 'warning');
-                  return;
-                }
-                onOpenForm('EOD', myTaskConfig, myBodData, myEodData);
-              }}
+              onClick={handleOpenMyEod}
             >
               <i className="bi bi-moon-stars me-1"></i> {myTodayStatus.eodFilled ? 'Edit My EOD' : 'Open My EOD'}
             </button>

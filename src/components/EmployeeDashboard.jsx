@@ -158,6 +158,48 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
     return <span className="badge badge-pending">Pending Review</span>;
   };
 
+  const handleOpenBod = async () => {
+    let cfg = config;
+    let b = bodData;
+    let e = eodData;
+    if ((!cfg || cfg.length === 0) && user?.id) {
+      try {
+        const res = await fetch(`/api/employee/${user.id}/form`);
+        const d = await res.json();
+        if (d.success) {
+          if (d.config && d.config.length > 0) {
+            cfg = d.config;
+            setConfig(cfg);
+          }
+          if (d.bodData) { b = d.bodData; setBodData(b); }
+          if (d.eodData) { e = d.eodData; setEodData(e); }
+        }
+      } catch (err) {}
+    }
+    onOpenForm('BOD', cfg, b, e);
+  };
+
+  const handleOpenEod = async () => {
+    let cfg = config;
+    let b = bodData;
+    let e = eodData;
+    if ((!cfg || cfg.length === 0) && user?.id) {
+      try {
+        const res = await fetch(`/api/employee/${user.id}/form`);
+        const d = await res.json();
+        if (d.success) {
+          if (d.config && d.config.length > 0) {
+            cfg = d.config;
+            setConfig(cfg);
+          }
+          if (d.bodData) { b = d.bodData; setBodData(b); }
+          if (d.eodData) { e = d.eodData; setEodData(e); }
+        }
+      } catch (err) {}
+    }
+    onOpenForm('EOD', cfg, b, e);
+  };
+
   return (
     <div>
       {/* Page Intro */}
@@ -230,7 +272,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                   type="button"
                   className="btn btn-warning"
                   style={{ width: '100%' }}
-                  onClick={() => onOpenForm('BOD', config, bodData, eodData)}
+                  onClick={handleOpenBod}
                 >
                   <i className="bi bi-pencil-square me-1"></i> Edit Morning BOD
                 </button>
@@ -249,7 +291,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                 type="button"
                 className="btn btn-primary"
                 style={{ width: '100%' }}
-                onClick={() => onOpenForm('BOD', config, bodData, eodData)}
+                onClick={handleOpenBod}
               >
                 <i className="bi bi-sun me-1"></i> Open BOD Form
               </button>
@@ -297,7 +339,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                   type="button"
                   className="btn btn-warning"
                   style={{ width: '100%' }}
-                  onClick={() => onOpenForm('EOD', config, bodData, eodData)}
+                  onClick={handleOpenEod}
                 >
                   <i className="bi bi-pencil-square me-1"></i> Edit Evening EOD
                 </button>
@@ -326,7 +368,7 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
                 type="button"
                 className="btn btn-gold"
                 style={{ width: '100%' }}
-                onClick={() => onOpenForm('EOD', config, bodData, eodData)}
+                onClick={handleOpenEod}
               >
                 <i className="bi bi-moon-stars me-1"></i> Open EOD Form
               </button>

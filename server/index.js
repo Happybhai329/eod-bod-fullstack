@@ -290,7 +290,10 @@ app.get('/api/employee/:id/form', async (req, res) => {
     const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found or inactive.' });
 
-    let userConfig = await get(`SELECT * FROM user_configs WHERE employee_id = ? OR employee_id = ?`, [emp.id, emp.emp_id || emp.id]);
+    let userConfig = await get(
+      `SELECT * FROM user_configs WHERE employee_id IN (?, ?) OR LOWER(TRIM(employee_id)) IN (LOWER(TRIM(?)), LOWER(TRIM(?)))`,
+      [emp.id, emp.emp_id || emp.id, emp.id, emp.emp_id || emp.id]
+    );
     let configObj = [];
     if (userConfig && userConfig.config_json) {
       try { configObj = JSON.parse(userConfig.config_json); } catch (e) {}
@@ -850,7 +853,13 @@ app.post('/api/assigned-tasks/submit', async (req, res) => {
 app.get('/api/config/:id', async (req, res) => {
   try {
     const empId = req.params.id;
-    const configRow = await get(`SELECT * FROM user_configs WHERE employee_id = ?`, [empId]);
+    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [empId, empId]);
+    const id1 = emp ? emp.id : empId;
+    const id2 = emp ? (emp.emp_id || emp.id) : empId;
+    const configRow = await get(
+      `SELECT * FROM user_configs WHERE employee_id IN (?, ?) OR LOWER(TRIM(employee_id)) IN (LOWER(TRIM(?)), LOWER(TRIM(?)))`,
+      [id1, id2, id1, id2]
+    );
     const config = configRow ? JSON.parse(configRow.config_json) : [];
     res.json({ success: true, config });
   } catch (err) {
@@ -861,14 +870,16 @@ app.get('/api/config/:id', async (req, res) => {
 app.post('/api/config/:id', async (req, res) => {
   try {
     const empId = req.params.id;
+    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [empId, empId]);
+    const effectiveEmpId = emp?.emp_id || empId;
     const { configJson } = req.body;
     const nowIso = new Date().toISOString();
     await run(
       `INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`,
-      [empId, JSON.stringify(configJson), nowIso]
+      [effectiveEmpId, JSON.stringify(configJson), nowIso]
     );
     // Push config change to Google Sheets (fire-and-forget)
-    syncUserConfigToSheets({ employee_id: empId, config_json: JSON.stringify(configJson), last_updated: nowIso }).catch(err => {
+    syncUserConfigToSheets({ employee_id: effectiveEmpId, config_json: JSON.stringify(configJson), last_updated: nowIso }).catch(err => {
       console.warn('[Sync Outbox] Config sync notice (ignored):', err.message);
     });
     res.json({ success: true, message: 'Tasks configuration saved successfully.' });
