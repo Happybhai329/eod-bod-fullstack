@@ -175,6 +175,57 @@ export default function BodEodFormModal({
     }
   }, [config]);
 
+  useEffect(() => {
+    if (initialBodData) {
+      let b = initialBodData;
+      if (typeof b === 'string') {
+        try { b = JSON.parse(b); } catch (e) {}
+      }
+      if (b && typeof b === 'object') {
+        setCurrentBodData(b);
+      }
+    } else {
+      setCurrentBodData(null);
+    }
+  }, [initialBodData]);
+
+  useEffect(() => {
+    if (initialEodData) {
+      let ed = initialEodData;
+      if (typeof ed === 'string') {
+        try { ed = JSON.parse(ed); } catch (e) {}
+      }
+      if (ed && typeof ed === 'object') {
+        setCurrentEodData(ed);
+      }
+    } else {
+      setCurrentEodData(null);
+    }
+  }, [initialEodData]);
+
+  // When modal opens, ensure state is freshly synced from parent props
+  useEffect(() => {
+    if (isOpen) {
+      if (initialBodData) {
+        let b = initialBodData;
+        if (typeof b === 'string') {
+          try { b = JSON.parse(b); } catch (e) {}
+        }
+        if (b && typeof b === 'object') setCurrentBodData(b);
+      }
+      if (initialEodData) {
+        let ed = initialEodData;
+        if (typeof ed === 'string') {
+          try { ed = JSON.parse(ed); } catch (e) {}
+        }
+        if (ed && typeof ed === 'object') setCurrentEodData(ed);
+      }
+      if (Array.isArray(config) && config.length > 0) {
+        setModalConfig(config);
+      }
+    }
+  }, [isOpen]);
+
   const hasFetchedRef = useRef(false);
 
   // Self-healing fallback: If config or BOD is missing when modal opens, fetch fresh from server once!
@@ -189,7 +240,7 @@ export default function BodEodFormModal({
 
     const hasConfig = Array.isArray(modalConfig) && modalConfig.length > 0;
     const hasBod = currentBodData && typeof currentBodData === 'object' && Object.keys(currentBodData).length > 0;
-    const needsBod = phase === 'EOD' && !hasBod;
+    const needsBod = !hasBod;
 
     if (!hasConfig || needsBod) {
       let isMounted = true;
