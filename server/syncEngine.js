@@ -249,9 +249,13 @@ export async function syncInbound() {
           const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
           let safeApprovalStatus = r.approval_status || existing?.approval_status;
           
-          // Safeguard 1: Never allow Sheets to downgrade an existing Approved or Auto Approved report in DB
-          if (existing?.approval_status === 'Approved' || existing?.approval_status === 'Auto Approved') {
-            if (r.approval_status !== 'Approved' && r.approval_status !== 'Auto Approved') {
+          // Safeguard 1: If DB is already 'Approved', it can NEVER be changed or downgraded to 'Auto Approved'
+          if (existing?.approval_status === 'Approved') {
+            safeApprovalStatus = 'Approved';
+          } else if (existing?.approval_status === 'Auto Approved') {
+            if (r.approval_status === 'Approved') {
+              safeApprovalStatus = 'Approved'; // Head manual approval upgrades Auto Approved
+            } else if (r.approval_status !== 'Approved' && r.approval_status !== 'Auto Approved') {
               safeApprovalStatus = existing.approval_status;
             }
           }
@@ -291,7 +295,30 @@ export async function syncInbound() {
           const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
           const safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
           const safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
-          const safeRatedBy = r.rated_by || existing?.rated_by || (safeApprovalStatus === 'Auto Approved' ? 'System (Auto Approval)' : null);
+          
+          const isHumanReviewer = (
+            (r.rated_by && !r.rated_by.toLowerCase().includes('system')) ||
+            (existing?.rated_by && !existing.rated_by.toLowerCase().includes('system')) ||
+            (safeRatingEditedBy && !safeRatingEditedBy.toLowerCase().includes('system'))
+          );
+
+          let safeRatedBy = null;
+          if (r.rated_by && !r.rated_by.toLowerCase().includes('system')) {
+            safeRatedBy = r.rated_by;
+          } else if (existing?.rated_by && !existing.rated_by.toLowerCase().includes('system')) {
+            safeRatedBy = existing.rated_by;
+          } else if (safeRatingEditedBy && !safeRatingEditedBy.toLowerCase().includes('system')) {
+            safeRatedBy = safeRatingEditedBy;
+          } else if (safeApprovalStatus === 'Auto Approved') {
+            safeRatedBy = 'System (Auto Approval)';
+          } else {
+            safeRatedBy = r.rated_by || existing?.rated_by || null;
+          }
+
+          if (isHumanReviewer) {
+            safeApprovalStatus = 'Approved';
+          }
+
           const safeRatedOn = r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null);
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
           const safeFineReason = r.fine_reason || existing?.fine_reason || null;

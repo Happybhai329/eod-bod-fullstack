@@ -549,15 +549,34 @@ export async function initDatabase() {
 
           has_eod := (NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' AND NEW.eod_data != 'null');
 
-          -- Preserve Approved / Auto Approved status on UPDATE
-          IF TG_OP = 'UPDATE' AND OLD.approval_status IN ('Approved', 'Auto Approved') THEN
-              IF NEW.approval_status IS NULL OR NEW.approval_status IN ('Pending Review', 'Pending EOD', 'EOD Missed') THEN
-                  NEW.approval_status := OLD.approval_status;
+          -- Preserve manual 'Approved' status - NEVER allow downgrade or change to Auto Approved
+          IF TG_OP = 'UPDATE' AND OLD.approval_status = 'Approved' THEN
+              IF NEW.approval_status != 'Approved' THEN
+                  NEW.approval_status := 'Approved';
+                  NEW.head_rating := COALESCE(NEW.head_rating, OLD.head_rating);
+                  NEW.rated_by := COALESCE(OLD.rated_by, NEW.rated_by);
+                  NEW.rated_on := COALESCE(NEW.rated_on, OLD.rated_on);
+                  NEW.approval_timestamp := COALESCE(NEW.approval_timestamp, OLD.approval_timestamp);
+              END IF;
+          ELSIF TG_OP = 'UPDATE' AND OLD.approval_status = 'Auto Approved' THEN
+              -- Never allow Sheets to downgrade Auto Approved to 'EOD Missed' or 'Pending EOD' when EOD exists
+              IF NEW.approval_status IS NULL OR NEW.approval_status IN ('Pending EOD', 'EOD Missed') THEN
+                  NEW.approval_status := 'Auto Approved';
                   NEW.head_rating := COALESCE(NEW.head_rating, OLD.head_rating);
                   NEW.rated_by := COALESCE(NEW.rated_by, OLD.rated_by);
                   NEW.rated_on := COALESCE(NEW.rated_on, OLD.rated_on);
                   NEW.approval_timestamp := COALESCE(NEW.approval_timestamp, OLD.approval_timestamp);
               END IF;
+          END IF;
+
+          -- If human reviewer is present, status MUST be 'Approved'
+          IF NEW.rating_edited_by IS NOT NULL AND NEW.rating_edited_by != '' AND LOWER(NEW.rating_edited_by) NOT LIKE '%system%' THEN
+              NEW.approval_status := 'Approved';
+              IF NEW.rated_by IS NULL OR NEW.rated_by = '' OR LOWER(NEW.rated_by) LIKE '%system%' THEN
+                  NEW.rated_by := NEW.rating_edited_by;
+              END IF;
+          ELSIF NEW.rated_by IS NOT NULL AND NEW.rated_by != '' AND LOWER(NEW.rated_by) NOT LIKE '%system%' THEN
+              NEW.approval_status := 'Approved';
           END IF;
 
           IF NOT has_eod THEN

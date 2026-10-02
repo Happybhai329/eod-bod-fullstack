@@ -51,6 +51,16 @@ async function processCandidateReports(reports, now) {
       continue; // Skip reports where Evening EOD was never completed
     }
 
+    // Safeguard A: NEVER auto-approve if the head has manually approved or rated
+    const hasHumanReviewer = (
+      r.approval_status === 'Approved' ||
+      (r.rating_edited_by && r.rating_edited_by.trim() !== '' && !r.rating_edited_by.toLowerCase().includes('system')) ||
+      (r.rated_by && r.rated_by.trim() !== '' && !r.rated_by.toLowerCase().includes('system'))
+    );
+    if (hasHumanReviewer) {
+      continue;
+    }
+
     let expiryTime = parseTimestampSafe(r.expiry_timestamp);
     if (!expiryTime && r.eod_submitted_at) {
       const eodSub = parseTimestampSafe(r.eod_submitted_at);
@@ -60,17 +70,17 @@ async function processCandidateReports(reports, now) {
       const lu = parseTimestampSafe(r.last_updated);
       if (lu) expiryTime = lu + REVIEW_WINDOW_MS;
     }
-    // Fallback: report date + 36 hours (e.g. end of work day + 24 hours review window)
+    // Fallback: report date + 48 hours (gives full 24h review window after end of day D)
     if (!expiryTime && r.date) {
       const rd = parseTimestampSafe(r.date);
-      if (rd) expiryTime = rd + (36 * 60 * 60 * 1000);
+      if (rd) expiryTime = rd + (48 * 60 * 60 * 1000);
     }
 
-    // Hard safeguard: If report date is more than 36 hours in the past, it MUST be expired
+    // Hard safeguard: If report date is more than 48 hours in the past, it is expired
     if (r.date) {
       const rd = parseTimestampSafe(r.date);
-      if (rd && (now - rd) > (36 * 60 * 60 * 1000)) {
-        expiryTime = Math.min(expiryTime || Infinity, rd + (36 * 60 * 60 * 1000));
+      if (rd && (now - rd) > (48 * 60 * 60 * 1000)) {
+        expiryTime = Math.min(expiryTime || Infinity, rd + (48 * 60 * 60 * 1000));
       }
     }
 
@@ -153,10 +163,12 @@ export async function checkAutoApprovals(force = false) {
     }
     lastCheckTime = now;
 
-    // Find all reports pending review that have completed EOD data
+    // Find all reports pending review that have completed EOD data and NO human reviewer
     const reports = await query(`
       SELECT * FROM daily_reports 
       WHERE (approval_status IS NULL OR approval_status = 'Pending Review' OR approval_status = '')
+        AND (rating_edited_by IS NULL OR rating_edited_by = '' OR LOWER(rating_edited_by) LIKE '%system%')
+        AND (rated_by IS NULL OR rated_by = '' OR LOWER(rated_by) LIKE '%system%')
         AND eod_data IS NOT NULL 
         AND eod_data != ''
         AND eod_data != '{}'
@@ -192,6 +204,8 @@ export async function checkEmployeeAutoApprovals(empId) {
       SELECT * FROM daily_reports 
       WHERE (employee_id = ? OR employee_id = ?)
         AND (approval_status IS NULL OR approval_status = 'Pending Review' OR approval_status = '')
+        AND (rating_edited_by IS NULL OR rating_edited_by = '' OR LOWER(rating_edited_by) LIKE '%system%')
+        AND (rated_by IS NULL OR rated_by = '' OR LOWER(rated_by) LIKE '%system%')
         AND eod_data IS NOT NULL 
         AND eod_data != ''
         AND eod_data != '{}'
