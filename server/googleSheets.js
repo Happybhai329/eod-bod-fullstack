@@ -107,6 +107,8 @@ export function parseTimestampSafe(val) {
   const s = String(val).trim();
   if (!s) return null;
 
+  const nowMs = Date.now();
+
   // 1. DD/MM/YYYY [HH:mm[:ss]]
   const ddmmyyyy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
   if (ddmmyyyy) {
@@ -120,7 +122,21 @@ export function parseTimestampSafe(val) {
     if (m > 12 && d <= 12) {
       const tmp = d; d = m; m = tmp;
     }
-    const dObj = new Date(y, m - 1, d, hr, min, sec);
+
+    let dObj = new Date(y, m - 1, d, hr, min, sec);
+    // If treating as DD/MM produces a future date, but swapping d and m produces a valid past date
+    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000 && d <= 12 && m <= 12) {
+      const swapped = new Date(y, d - 1, m, hr, min, sec);
+      if (!isNaN(swapped.getTime()) && swapped.getTime() <= nowMs + 3600000) {
+        dObj = swapped;
+      }
+    }
+
+    // Hard ceiling: no report/update timestamp can legitimately be in the future
+    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000) {
+      return nowMs;
+    }
+
     return isNaN(dObj.getTime()) ? null : dObj.getTime();
   }
 
@@ -134,22 +150,27 @@ export function parseTimestampSafe(val) {
     const min = isoMatch[5] ? parseInt(isoMatch[5], 10) : 0;
     const sec = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
 
-    // Detect inverted YYYY-DD-MM (e.g. 2026-12-09 when it should be September 12, 2026)
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth() + 1;
-    if (y === currentYear && m > currentMonth && d <= 12) {
-      const tmp = m; m = d; d = tmp;
+    let dObj = new Date(y, m - 1, d, hr, min, sec);
+    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000 && d <= 12 && m <= 12) {
+      const swapped = new Date(y, d - 1, m, hr, min, sec);
+      if (!isNaN(swapped.getTime()) && swapped.getTime() <= nowMs + 3600000) {
+        dObj = swapped;
+      }
     }
 
-    const dObj = new Date(y, m - 1, d, hr, min, sec);
+    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000) {
+      return nowMs;
+    }
+
     return isNaN(dObj.getTime()) ? null : dObj.getTime();
   }
 
   // 3. Fallback standard Date parse
   const d = new Date(s);
   const t = d.getTime();
-  return isNaN(t) ? null : t;
+  if (isNaN(t)) return null;
+  if (t > nowMs + 3600000) return nowMs;
+  return t;
 }
 
 // Spreadsheet IDs — read from .env, fallback to hardcoded values from code.gs
@@ -423,18 +444,29 @@ export async function fetchRealUserConfigs() {
   const data = await readSheet(APP_DB_ID, 'User_Configs');
   if (!data || data.length < 2) return [];
 
-  const configs = [];
+  // Deduplicate: User_Configs in Sheets has thousands of appended history rows.
+  // We only keep the newest config per employee.
+  const latestMap = new Map();
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     if (!row[0]) continue;
-    configs.push({
-      employee_id: row[0].toString().trim(),
-      config_json: row[1] ? row[1].toString() : '[]',
-      last_updated: row[2] ? row[2].toString() : new Date().toISOString(),
-    });
+    const empId = row[0].toString().trim();
+    const lu = row[2] ? row[2].toString() : '';
+    const ts = parseTimestampSafe(lu) || 0;
+
+    const existing = latestMap.get(empId);
+    if (!existing || ts >= existing.ts) {
+      latestMap.set(empId, {
+        employee_id: empId,
+        config_json: row[1] ? row[1].toString() : '[]',
+        last_updated: lu || new Date().toISOString(),
+        ts
+      });
+    }
   }
 
-  console.log(`[Google Sheets] Fetched ${configs.length} real user configs from APP_DB`);
+  const configs = Array.from(latestMap.values());
+  console.log(`[Google Sheets] Fetched ${configs.length} unique user configs from APP_DB (deduped from ${data.length - 1} rows)`);
   return configs;
 }
 
@@ -684,13 +716,20 @@ export async function syncDailyReportToSheets(report) {
   // Force date to be treated as plain text string literal by prefixing with '
   // This prevents Google Sheets from converting DD/MM/YYYY into an Excel serial number like 46277
   const formattedDate = targetDate.startsWith("'") ? targetDate : `'${targetDate}`;
-  const formattedLastUpdated = formatIndianDateTime(report.last_updated || new Date());
+  const rawLastUpdated = formatIndianDateTime(report.last_updated || new Date());
+  const formattedLastUpdated = rawLastUpdated.startsWith("'") ? rawLastUpdated : `'${rawLastUpdated}`;
   const hasEod = Boolean(report.eod_data && report.eod_data !== '' && report.eod_data !== '{}' && report.eod_data !== 'null');
   const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
   const isTodayReport = targetDate === todayDateStr;
   const safeApprovalStatus = hasEod
     ? mergeVal(report.approval_status, 13, 'Pending Review')
     : (isTodayReport ? mergeVal(report.approval_status, 13, 'Pending EOD') : 'EOD Missed');
+
+  const safeTs = (val) => {
+    if (!val) return '';
+    const s = formatIndianDateTime(val);
+    return s ? (s.startsWith("'") ? s : `'${s}`) : '';
+  };
 
   const rowValues = [
     formattedDate,                                                  // 0: Date
@@ -699,18 +738,18 @@ export async function syncDailyReportToSheets(report) {
     mergeVal(report.bod_data, 3),                                   // 3: BOD_Data
     hasEod ? mergeVal(report.eod_data, 4) : '',                     // 4: EOD_Data
     hasEod ? mergeVal(report.system_score, 5) : '',                 // 5: System_Score_%
-    mergeVal(formattedLastUpdated, 6, formatIndianDateTime()),      // 6: Last_Updated
+    mergeVal(formattedLastUpdated, 6, `'${formatIndianDateTime()}`), // 6: Last_Updated
     hasEod ? mergeVal(report.head_rating, 7) : '',                  // 7: Head_Rating
     hasEod ? mergeVal(report.final_score, 8) : '',                  // 8: Final_Score_%
     mergeVal(report.attendance, 9, 'Present'),                      // 9: Attendance
     mergeVal(report.overtime, 10, 0),                               // 10: Overtime
-    mergeVal(report.rating_last_updated ? formatIndianDateTime(report.rating_last_updated) : '', 11), // 11: Rating_Last_Updated
+    mergeVal(safeTs(report.rating_last_updated), 11),               // 11: Rating_Last_Updated
     mergeVal(report.rating_edited_by, 12),                          // 12: Rating_Edited_By
     safeApprovalStatus,                                             // 13: Approval_Status
-    mergeVal(report.approval_timestamp ? formatIndianDateTime(report.approval_timestamp) : '', 14),   // 14: Approval_Timestamp
-    mergeVal(report.expiry_timestamp ? formatIndianDateTime(report.expiry_timestamp) : '', 15),       // 15: Expiry_Timestamp
+    mergeVal(safeTs(report.approval_timestamp), 14),                // 14: Approval_Timestamp
+    mergeVal(safeTs(report.expiry_timestamp), 15),                  // 15: Expiry_Timestamp
     mergeVal(report.rated_by, 16),                                  // 16: Rated_By
-    mergeVal(report.rated_on ? formatIndianDateTime(report.rated_on) : '', 17),                         // 17: Rated_On
+    mergeVal(safeTs(report.rated_on), 17),                          // 17: Rated_On
     mergeVal(report.fine_amount, 18),                               // 18: Fine_Amount
     mergeVal(report.fine_reason, 19),                               // 19: Fine_Reason
     mergeVal(report.fine_doc_url, 20),                              // 20: Fine_Document_URL

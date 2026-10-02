@@ -117,9 +117,12 @@ function parseTimestampToMs(val) {
 }
 
 function hasValidEod(r) {
-  if (!r || !r.eod_data) return false;
+  if (!r) return false;
+  if (r.approval_status === 'Approved' || r.approval_status === 'Auto Approved') return true;
+  const rawEod = r.eod_data || r.eodData;
+  if (!rawEod) return false;
   try {
-    const parsed = typeof r.eod_data === 'object' ? r.eod_data : JSON.parse(r.eod_data);
+    const parsed = typeof rawEod === 'object' ? rawEod : JSON.parse(rawEod);
     return Boolean(parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0);
   } catch (e) {
     return false;
@@ -617,18 +620,19 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
     };
 
     const sanitizeReport = (r) => {
-      const validEod = hasValidEod(r);
+      const isApproved = r.approval_status === 'Approved' || r.approval_status === 'Auto Approved';
+      const validEod = hasValidEod(r) || isApproved;
       const isToday = r.date === todayStr;
       let status = r.approval_status;
-      if (!validEod) {
+      if (!isApproved && !validEod) {
         status = isToday ? 'Pending EOD' : 'EOD Missed';
       }
       return {
         ...r,
         employee_name: emp ? emp.name : '',
         has_eod: validEod,
-        system_score: validEod ? sanitizeScore(r.system_score) : null,
-        final_score: validEod ? sanitizeScore(r.final_score) : null,
+        system_score: (validEod || isApproved) ? sanitizeScore(r.system_score) : null,
+        final_score: (validEod || isApproved) ? sanitizeScore(r.final_score) : null,
         approval_status: status,
         rating_edited_by: sanitizeForEmployee(r.rating_edited_by),
         rated_by: sanitizeForEmployee(r.rated_by),
@@ -809,10 +813,33 @@ app.post('/api/head/rate', async (req, res) => {
     const finalScore = calculateFinalScore(sysScore, numRating);
     const nowIso = new Date().toISOString();
 
-    await run(
-      `UPDATE daily_reports SET head_rating = ?, final_score = ?, attendance = ?, overtime = ?, rating_last_updated = ?, rating_edited_by = ?, approval_status = 'Approved', approval_timestamp = ?, rated_by = ?, rated_on = ?, last_updated = ? WHERE id = ?`,
-      [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, report.id]
-    );
+    const isPg = getIsPostgres();
+    if (isPg) {
+      await run(
+        `UPDATE daily_reports SET 
+           head_rating = ?, 
+           final_score = ?, 
+           "finalScore" = ?,
+           attendance = ?, 
+           overtime = ?, 
+           rating_last_updated = ?, 
+           rating_edited_by = ?, 
+           approval_status = 'Approved', 
+           approval_timestamp = ?, 
+           rated_by = ?, 
+           "headRating" = ?,
+           rated_on = ?, 
+           last_updated = ?,
+           "lastUpdated" = NOW()
+         WHERE id = ?`,
+        [numRating, finalScore, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, String(numRating), nowIso, nowIso, report.id]
+      );
+    } else {
+      await run(
+        `UPDATE daily_reports SET head_rating = ?, final_score = ?, attendance = ?, overtime = ?, rating_last_updated = ?, rating_edited_by = ?, approval_status = 'Approved', approval_timestamp = ?, rated_by = ?, rated_on = ?, last_updated = ? WHERE id = ?`,
+        [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, report.id]
+      );
+    }
 
     const reviewerDisplayName = headUser ? headUser.name : 'Department Head';
     const notifId = 'N' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);

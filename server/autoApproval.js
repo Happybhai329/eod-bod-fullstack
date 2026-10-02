@@ -27,7 +27,7 @@ import {
   parseScoreHelper,
   DEFAULT_HEAD_RATING
 } from './scoringEngine.js';
-import { parseTimestampSafe } from './googleSheets.js';
+import { parseTimestampSafe, syncDailyReportToSheets } from './googleSheets.js';
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const AUTO_APPROVAL_THROTTLE_MS = 30 * 1000; // Run at most once every 30 seconds
@@ -166,7 +166,10 @@ export async function checkAutoApprovals(force = false) {
     const autoApprovedCount = await processCandidateReports(reports, now);
 
     if (autoApprovedCount > 0) {
-      console.log(`[Auto Approval] Successfully auto-approved ${autoApprovedCount} expired daily reports.`);
+      console.log(`[Auto Approval] Successfully auto-approved ${autoApprovedCount} expired daily reports. Triggering batch outbound sync...`);
+      import('./syncEngine.js').then(m => m.syncOutbound()).catch(err => {
+        console.warn('[Auto Approval] Background outbound sync notice:', err.message);
+      });
     }
 
     return { success: true, count: autoApprovedCount };

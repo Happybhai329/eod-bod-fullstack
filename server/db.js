@@ -422,8 +422,16 @@ export async function initDatabase() {
           NEW."departmentName" := COALESCE(NULLIF(NEW."departmentName", ''), NULLIF(NEW.department, ''));
           NEW.department := COALESCE(NULLIF(NEW.department, ''), NULLIF(NEW."departmentName", ''));
 
-          -- BOD conversion: properly detect which column changed on UPDATE
+          -- BOD conversion & preservation on UPDATE
           IF TG_OP = 'UPDATE' THEN
+              -- Preserve existing BOD if NEW is empty/null but OLD had valid BOD
+              IF (NEW.bod_data IS NULL OR NEW.bod_data = '' OR NEW.bod_data = '{}') AND (NEW."bodData" IS NULL OR NEW."bodData"::text = '{}' OR NEW."bodData"::text = 'null') THEN
+                  IF OLD.bod_data IS NOT NULL AND OLD.bod_data != '' AND OLD.bod_data != '{}' THEN
+                      NEW.bod_data := OLD.bod_data;
+                      NEW."bodData" := OLD."bodData";
+                  END IF;
+              END IF;
+
               IF NEW.bod_data IS DISTINCT FROM OLD.bod_data AND NEW."bodData" IS NOT DISTINCT FROM OLD."bodData" THEN
                   IF NEW.bod_data IS NOT NULL AND NEW.bod_data != '' AND NEW.bod_data != '{}' THEN
                       BEGIN
@@ -472,10 +480,27 @@ export async function initDatabase() {
               END IF;
           END IF;
 
-          -- EOD conversion: properly detect which column changed on UPDATE
+          -- EOD conversion & preservation on UPDATE
           IF TG_OP = 'UPDATE' THEN
+              -- Preserve existing EOD if NEW is empty/null but OLD had valid EOD
+              IF (NEW.eod_data IS NULL OR NEW.eod_data = '' OR NEW.eod_data = '{}' OR NEW.eod_data = 'null') AND 
+                 (NEW."eodData" IS NULL OR NEW."eodData"::text = '{}' OR NEW."eodData"::text = 'null') THEN
+                  IF OLD.eod_data IS NOT NULL AND OLD.eod_data != '' AND OLD.eod_data != '{}' AND OLD.eod_data != 'null' THEN
+                      NEW.eod_data := OLD.eod_data;
+                      NEW."eodData" := OLD."eodData";
+                  END IF;
+              END IF;
+
+              -- Preserve eod_submitted_at and bod_submitted_at if OLD has it
+              IF OLD.eod_submitted_at IS NOT NULL AND NEW.eod_submitted_at IS NULL THEN
+                  NEW.eod_submitted_at := OLD.eod_submitted_at;
+              END IF;
+              IF OLD.bod_submitted_at IS NOT NULL AND NEW.bod_submitted_at IS NULL THEN
+                  NEW.bod_submitted_at := OLD.bod_submitted_at;
+              END IF;
+
               IF NEW.eod_data IS DISTINCT FROM OLD.eod_data AND NEW."eodData" IS NOT DISTINCT FROM OLD."eodData" THEN
-                  IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' THEN
+                  IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' AND NEW.eod_data != 'null' THEN
                       BEGIN
                           NEW."eodData" := NEW.eod_data::jsonb;
                       EXCEPTION WHEN OTHERS THEN
@@ -493,7 +518,7 @@ export async function initDatabase() {
                       NEW.eod_data := '';
                   END IF;
               ELSE
-                  IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' THEN
+                  IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' AND NEW.eod_data != 'null' THEN
                       BEGIN
                           NEW."eodData" := NEW.eod_data::jsonb;
                       EXCEPTION WHEN OTHERS THEN
@@ -508,7 +533,7 @@ export async function initDatabase() {
               END IF;
           ELSE
               -- INSERT
-              IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' THEN
+              IF NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' AND NEW.eod_data != 'null' THEN
                   BEGIN
                       NEW."eodData" := NEW.eod_data::jsonb;
                   EXCEPTION WHEN OTHERS THEN
@@ -524,39 +549,97 @@ export async function initDatabase() {
 
           has_eod := (NEW.eod_data IS NOT NULL AND NEW.eod_data != '' AND NEW.eod_data != '{}' AND NEW.eod_data != 'null');
 
+          -- Preserve Approved / Auto Approved status on UPDATE
+          IF TG_OP = 'UPDATE' AND OLD.approval_status IN ('Approved', 'Auto Approved') THEN
+              IF NEW.approval_status IS NULL OR NEW.approval_status IN ('Pending Review', 'Pending EOD', 'EOD Missed') THEN
+                  NEW.approval_status := OLD.approval_status;
+                  NEW.head_rating := COALESCE(NEW.head_rating, OLD.head_rating);
+                  NEW.rated_by := COALESCE(NEW.rated_by, OLD.rated_by);
+                  NEW.rated_on := COALESCE(NEW.rated_on, OLD.rated_on);
+                  NEW.approval_timestamp := COALESCE(NEW.approval_timestamp, OLD.approval_timestamp);
+              END IF;
+          END IF;
+
           IF NOT has_eod THEN
-              NEW."systemScore" := NULL;
-              NEW.system_score := NULL;
-              NEW."finalScore" := NULL;
-              NEW.final_score := NULL;
-              IF is_past_day THEN
-                  NEW.approval_status := 'EOD Missed';
+              IF TG_OP = 'UPDATE' AND OLD.approval_status IN ('Approved', 'Auto Approved') THEN
+                  -- Keep existing status and scores if already approved
+                  NULL;
               ELSE
-                  NEW.approval_status := 'Pending EOD';
+                  NEW."systemScore" := NULL;
+                  NEW.system_score := NULL;
+                  NEW."finalScore" := NULL;
+                  NEW.final_score := NULL;
+                  IF is_past_day THEN
+                      NEW.approval_status := 'EOD Missed';
+                  ELSE
+                      NEW.approval_status := 'Pending EOD';
+                  END IF;
               END IF;
           ELSE
-              NEW."systemScore" := COALESCE(NEW."systemScore", NEW.system_score);
-              NEW.system_score := COALESCE(NEW.system_score, NEW."systemScore");
+              -- 1. System score sync
+              IF TG_OP = 'UPDATE' AND OLD.system_score IS NOT NULL AND OLD.system_score > 0 AND (NEW.system_score IS NULL OR NEW.system_score = 0) THEN
+                  NEW.system_score := OLD.system_score;
+                  NEW."systemScore" := OLD.system_score;
+              ELSIF TG_OP = 'UPDATE' AND OLD."systemScore" IS NOT NULL AND OLD."systemScore" > 0 AND (NEW."systemScore" IS NULL OR NEW."systemScore" = 0) THEN
+                  NEW.system_score := OLD."systemScore";
+                  NEW."systemScore" := OLD."systemScore";
+              ELSIF NEW.system_score IS NOT NULL AND NEW.system_score > 0 THEN
+                  NEW."systemScore" := NEW.system_score;
+              ELSIF NEW."systemScore" IS NOT NULL AND NEW."systemScore" > 0 THEN
+                  NEW.system_score := NEW."systemScore";
+              ELSE
+                  NEW.system_score := COALESCE(NEW.system_score, NEW."systemScore", 0);
+                  NEW."systemScore" := NEW.system_score;
+              END IF;
 
               IF NEW."systemScore" >= 1000 THEN
                   NEW."systemScore" := ROUND(NEW."systemScore" / 100);
                   NEW.system_score := NEW."systemScore";
               END IF;
 
-              NEW."finalScore" := COALESCE(NEW."finalScore", NEW.final_score, NEW."systemScore");
-              NEW.final_score := COALESCE(NEW.final_score, NEW."finalScore", NEW.system_score);
+              -- 2. Final score sync — NEVER let stale 0 or null overwrite positive score
+              IF TG_OP = 'UPDATE' AND NEW.final_score IS DISTINCT FROM OLD.final_score AND NEW.final_score IS NOT NULL AND NEW.final_score > 0 THEN
+                  NEW."finalScore" := NEW.final_score;
+              ELSIF TG_OP = 'UPDATE' AND NEW."finalScore" IS DISTINCT FROM OLD."finalScore" AND NEW."finalScore" IS NOT NULL AND NEW."finalScore" > 0 THEN
+                  NEW.final_score := NEW."finalScore";
+              ELSIF TG_OP = 'UPDATE' AND OLD.final_score IS NOT NULL AND OLD.final_score > 0 AND (NEW.final_score IS NULL OR NEW.final_score = 0) THEN
+                  NEW.final_score := OLD.final_score;
+                  NEW."finalScore" := OLD.final_score;
+              ELSIF TG_OP = 'UPDATE' AND OLD."finalScore" IS NOT NULL AND OLD."finalScore" > 0 AND (NEW."finalScore" IS NULL OR NEW."finalScore" = 0) THEN
+                  NEW.final_score := OLD."finalScore";
+                  NEW."finalScore" := OLD."finalScore";
+              ELSE
+                  IF NEW.final_score IS NOT NULL AND NEW.final_score > 0 THEN
+                      NEW."finalScore" := NEW.final_score;
+                  ELSIF NEW."finalScore" IS NOT NULL AND NEW."finalScore" > 0 THEN
+                      NEW.final_score := NEW."finalScore";
+                  ELSIF NEW.system_score IS NOT NULL AND NEW.system_score > 0 THEN
+                      NEW.final_score := NEW.system_score;
+                      NEW."finalScore" := NEW.system_score;
+                  ELSIF TG_OP = 'UPDATE' AND OLD.final_score IS NOT NULL AND OLD.final_score > 0 THEN
+                      NEW.final_score := OLD.final_score;
+                      NEW."finalScore" := OLD.final_score;
+                  ELSE
+                      NEW.final_score := COALESCE(NEW.final_score, NEW."finalScore", 0);
+                      NEW."finalScore" := NEW.final_score;
+                  END IF;
+              END IF;
 
               IF NEW."finalScore" >= 1000 THEN
                   NEW."finalScore" := ROUND(NEW."finalScore" / 100);
                   NEW.final_score := NEW."finalScore";
               END IF;
 
+              -- 3. Approval status
               IF NEW.approval_status IN ('EOD Missed', 'Pending EOD') OR NEW.approval_status IS NULL THEN
                   NEW.approval_status := 'Pending Review';
               END IF;
           END IF;
 
-          NEW."lastUpdated" := COALESCE(NEW."lastUpdated", NOW());
+          NEW."lastUpdated" := NOW();
+          IF NEW.last_updated IS NULL OR NEW.last_updated = '' THEN
+              NEW.last_updated := NOW()::text;
+          END IF;
 
           RETURN NEW;
       END;

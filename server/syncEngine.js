@@ -191,23 +191,26 @@ export async function syncInbound() {
   // ============ E. User Task Configurations (Two-Way — skip if DB is newer) ============
   try {
     const configs = await fetchRealUserConfigs();
-    for (const c of configs) {
-      try {
-        // Check if DB already has a newer version
-        const existing = await get(`SELECT last_updated FROM user_configs WHERE employee_id = ?`, [c.employee_id]);
-        if (existing && toTimestampMs(existing.last_updated) > toTimestampMs(c.last_updated)) {
-          summary.skippedNewerInDb++;
-          continue;
+    for (let i = 0; i < configs.length; i += 15) {
+      const chunk = configs.slice(i, i + 15);
+      await Promise.all(chunk.map(async (c) => {
+        try {
+          // Check if DB already has a newer version
+          const existing = await get(`SELECT last_updated FROM user_configs WHERE employee_id = ?`, [c.employee_id]);
+          if (existing && toTimestampMs(existing.last_updated) > toTimestampMs(c.last_updated)) {
+            summary.skippedNewerInDb++;
+            return;
+          }
+          await run(
+            `INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`,
+            [c.employee_id, c.config_json, c.last_updated]
+          );
+          summary.configs++;
+        } catch (err) {
+          summary.errors++;
+          console.error(`[Sync Inbound] Config ${c.employee_id} error:`, err.message);
         }
-        await run(
-          `INSERT OR REPLACE INTO user_configs (employee_id, config_json, last_updated) VALUES (?, ?, ?)`,
-          [c.employee_id, c.config_json, c.last_updated]
-        );
-        summary.configs++;
-      } catch (err) {
-        summary.errors++;
-        console.error(`[Sync Inbound] Config ${c.employee_id} error:`, err.message);
-      }
+      }));
     }
   } catch (err) {
     summary.errors++;
@@ -238,35 +241,56 @@ export async function syncInbound() {
           }
 
           // Merge: if Sheets has null/empty for a field, but DB already has a value, keep DB value!
-          const safeBod = (r.bod_data && r.bod_data !== '') ? safeJsonString(r.bod_data) : (existing?.bod_data || null);
-          const safeEod = (r.eod_data && r.eod_data !== '') ? safeJsonString(r.eod_data) : (existing?.eod_data || null);
+          const safeBod = (r.bod_data && r.bod_data !== '' && r.bod_data !== '{}') ? safeJsonString(r.bod_data) : (existing?.bod_data || null);
+          const safeEod = (r.eod_data && r.eod_data !== '' && r.eod_data !== '{}' && r.eod_data !== 'null') ? safeJsonString(r.eod_data) : (existing?.eod_data || null);
           const hasEod = Boolean(safeEod && safeEod !== '' && safeEod !== '{}' && safeEod !== 'null');
 
           const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
           const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
           let safeApprovalStatus = r.approval_status || existing?.approval_status;
           
-          // Safeguard: Never allow stale "Pending Review" from Google Sheets to overwrite an existing "Auto Approved" or "Approved" report
-          if ((existing?.approval_status === 'Auto Approved' || existing?.approval_status === 'Approved') && r.approval_status === 'Pending Review') {
-            safeApprovalStatus = existing.approval_status;
-          }
-
-          if (!safeApprovalStatus) {
-            safeApprovalStatus = hasEod ? 'Pending Review' : (isTodayReport ? 'Pending EOD' : 'EOD Missed');
-          } else if (!hasEod) {
-            if (isTodayReport) {
-              if (safeApprovalStatus === 'EOD Missed' || safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Pending Review') {
-                safeApprovalStatus = 'Pending EOD';
-              }
-            } else {
-              if (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Pending Review') {
-                safeApprovalStatus = 'EOD Missed';
-              }
+          // Safeguard 1: Never allow Sheets to downgrade an existing Approved or Auto Approved report in DB
+          if (existing?.approval_status === 'Approved' || existing?.approval_status === 'Auto Approved') {
+            if (r.approval_status !== 'Approved' && r.approval_status !== 'Auto Approved') {
+              safeApprovalStatus = existing.approval_status;
             }
           }
 
-          const safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' ? 100 : null))) : null;
-          const safeFinalScore = hasEod ? sanitizeScore(r.final_score != null ? r.final_score : (existing?.final_score ?? safeSysScore)) : null;
+          // Safeguard 2: If EOD was submitted (or eod_submitted_at exists), it can NEVER be 'EOD Missed'
+          if (hasEod || existing?.eod_submitted_at) {
+            if (safeApprovalStatus === 'EOD Missed' || !safeApprovalStatus) {
+              safeApprovalStatus = (existing?.approval_status === 'Approved' || existing?.approval_status === 'Auto Approved')
+                ? existing.approval_status
+                : 'Pending Review';
+            }
+          } else {
+            if (isTodayReport) {
+              safeApprovalStatus = 'Pending EOD';
+            } else {
+              safeApprovalStatus = 'EOD Missed';
+            }
+          }
+
+          const safeSysScore = hasEod ? sanitizeScore(
+            r.system_score != null && r.system_score > 0
+              ? r.system_score
+              : (existing?.system_score && existing.system_score > 0 ? existing.system_score : null)
+          ) : null;
+          const safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Approved' ? 100 : null))) : null;
+          let safeFinalScore = hasEod ? sanitizeScore(
+            r.final_score != null && r.final_score > 0
+              ? r.final_score
+              : (existing?.final_score && existing.final_score > 0 ? existing.final_score : safeSysScore)
+          ) : null;
+          if (hasEod && (!safeFinalScore || safeFinalScore === 0) && safeSysScore > 0) {
+            safeFinalScore = safeSysScore;
+          }
+          const safeAttendance = r.attendance || existing?.attendance || 'Present';
+          const safeOvertime = r.overtime != null ? r.overtime : (existing?.overtime ?? 0);
+          const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
+          const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
+          const safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
+          const safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
           const safeRatedBy = r.rated_by || existing?.rated_by || (safeApprovalStatus === 'Auto Approved' ? 'System (Auto Approval)' : null);
           const safeRatedOn = r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null);
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
@@ -408,7 +432,8 @@ export async function syncOutbound() {
       // Force date to be treated as plain text string literal by prefixing with '
       // This prevents Google Sheets from converting DD/MM/YYYY into an Excel serial number like 46277
       const formattedDate = normDate.startsWith("'") ? normDate : `'${normDate}`;
-      const formattedLastUpdated = formatIndianDateTime(r.last_updated || new Date());
+      const rawLastUpdated = formatIndianDateTime(r.last_updated || new Date());
+      const formattedLastUpdated = rawLastUpdated.startsWith("'") ? rawLastUpdated : `'${rawLastUpdated}`;
 
       const hasEod = Boolean(r.eod_data && r.eod_data !== '' && r.eod_data !== '{}' && r.eod_data !== 'null');
 
@@ -418,6 +443,12 @@ export async function syncOutbound() {
         ? mergeOutboundVal(r.approval_status, 13, 'Pending Review')
         : (isTodayReport ? mergeOutboundVal(r.approval_status, 13, 'Pending EOD') : 'EOD Missed');
 
+      const safeTs = (val) => {
+        if (!val) return '';
+        const s = formatIndianDateTime(val);
+        return s ? (s.startsWith("'") ? s : `'${s}`) : '';
+      };
+
       const rowValues = [
         formattedDate,
         r.employee_id,
@@ -425,23 +456,23 @@ export async function syncOutbound() {
         mergeOutboundVal(r.bod_data, 3),
         hasEod ? mergeOutboundVal(r.eod_data, 4) : '',
         hasEod ? mergeOutboundVal(r.system_score, 5) : '',
-        mergeOutboundVal(formattedLastUpdated, 6, formatIndianDateTime()),
+        mergeOutboundVal(formattedLastUpdated, 6, `'${formatIndianDateTime()}`),
         hasEod ? mergeOutboundVal(r.head_rating, 7) : '',
         hasEod ? mergeOutboundVal(r.final_score, 8) : '',
         mergeOutboundVal(r.attendance, 9, 'Present'),
         mergeOutboundVal(r.overtime, 10, 0),
-        mergeOutboundVal(r.rating_last_updated ? formatIndianDateTime(r.rating_last_updated) : '', 11),
+        mergeOutboundVal(safeTs(r.rating_last_updated), 11),
         mergeOutboundVal(r.rating_edited_by, 12),
         safeOutboundStatus,
-        mergeOutboundVal(r.approval_timestamp ? formatIndianDateTime(r.approval_timestamp) : '', 14),
-        mergeOutboundVal(r.expiry_timestamp ? formatIndianDateTime(r.expiry_timestamp) : '', 15),
+        mergeOutboundVal(safeTs(r.approval_timestamp), 14),
+        mergeOutboundVal(safeTs(r.expiry_timestamp), 15),
         mergeOutboundVal(r.rated_by, 16),
-        mergeOutboundVal(r.rated_on ? formatIndianDateTime(r.rated_on) : '', 17),
+        mergeOutboundVal(safeTs(r.rated_on), 17),
         mergeOutboundVal(r.fine_amount, 18),
         mergeOutboundVal(r.fine_reason, 19),
         mergeOutboundVal(r.fine_doc_url, 20),
         mergeOutboundVal(r.fine_doc_name, 21),
-        mergeOutboundVal(r.fine_issued_on ? formatIndianDateTime(r.fine_issued_on) : '', 22),
+        mergeOutboundVal(safeTs(r.fine_issued_on), 22),
         mergeOutboundVal(r.fine_issued_by, 23),
         mergeOutboundVal(r.fine_status, 24),
         mergeOutboundVal(r.employee_remarks, 25)
