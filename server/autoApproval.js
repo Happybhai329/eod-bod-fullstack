@@ -27,7 +27,7 @@ import {
   parseScoreHelper,
   DEFAULT_HEAD_RATING
 } from './scoringEngine.js';
-import { parseTimestampSafe, syncDailyReportToSheets } from './googleSheets.js';
+import { parseTimestampSafe, syncDailyReportToSheets, normalizeDateToDDMMYYYY } from './googleSheets.js';
 
 const REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const AUTO_APPROVAL_THROTTLE_MS = 30 * 1000; // Run at most once every 30 seconds
@@ -49,6 +49,13 @@ async function processCandidateReports(reports, now) {
     }
     if (!eodObj || typeof eodObj !== 'object' || Object.keys(eodObj).length === 0) {
       continue; // Skip reports where Evening EOD was never completed
+    }
+
+    // Safeguard 0: Under NO circumstance can today's report be auto-approved on the same day!
+    const todayStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
+    const normDate = normalizeDateToDDMMYYYY(r.date);
+    if (normDate === todayStr || r.date === todayStr) {
+      continue;
     }
 
     // Safeguard A: NEVER auto-approve if the head has manually approved or rated
@@ -81,6 +88,14 @@ async function processCandidateReports(reports, now) {
       const rd = parseTimestampSafe(r.date);
       if (rd && (now - rd) > (48 * 60 * 60 * 1000)) {
         expiryTime = Math.min(expiryTime || Infinity, rd + (48 * 60 * 60 * 1000));
+      }
+    }
+
+    // Safety floor: A report for date D can NEVER expire before date D + 24 hours
+    if (r.date) {
+      const rd = parseTimestampSafe(r.date);
+      if (rd && expiryTime && expiryTime < rd + (24 * 60 * 60 * 1000)) {
+        expiryTime = rd + (24 * 60 * 60 * 1000);
       }
     }
 

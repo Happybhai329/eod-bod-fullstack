@@ -249,6 +249,11 @@ export async function syncInbound() {
           const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
           let safeApprovalStatus = r.approval_status || existing?.approval_status;
           
+          // Safeguard 0: Today's reports can NEVER be Auto Approved on the same day!
+          if (isTodayReport && safeApprovalStatus === 'Auto Approved') {
+            safeApprovalStatus = hasEod ? 'Pending Review' : 'Pending EOD';
+          }
+
           // Safeguard 1: If DB is already 'Approved', it can NEVER be changed or downgraded to 'Auto Approved'
           if (existing?.approval_status === 'Approved') {
             safeApprovalStatus = 'Approved';
@@ -319,7 +324,17 @@ export async function syncInbound() {
             safeApprovalStatus = 'Approved';
           }
 
-          const safeRatedOn = r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null);
+          if (isTodayReport && safeApprovalStatus === 'Pending Review') {
+            safeHeadRating = null;
+            safeRatedBy = null;
+            safeRatedOn = null;
+            safeApprovalTimestamp = null;
+            safeFinalScore = safeSysScore;
+          }
+
+          const safeRatedOn = (isTodayReport && safeApprovalStatus === 'Pending Review')
+            ? null
+            : (r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null));
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
           const safeFineReason = r.fine_reason || existing?.fine_reason || null;
           const safeFineDocUrl = r.fine_doc_url || existing?.fine_doc_url || null;
