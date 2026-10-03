@@ -285,7 +285,7 @@ export async function syncInbound() {
               ? r.system_score
               : (existing?.system_score && existing.system_score > 0 ? existing.system_score : null)
           ) : null;
-          const safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Approved' ? 100 : null))) : null;
+          let safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Approved' ? 100 : null))) : null;
           let safeFinalScore = hasEod ? sanitizeScore(
             r.final_score != null && r.final_score > 0
               ? r.final_score
@@ -298,8 +298,8 @@ export async function syncInbound() {
           const safeOvertime = r.overtime != null ? r.overtime : (existing?.overtime ?? 0);
           const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
           const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
-          const safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
-          const safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
+          let safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
+          let safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
           
           const isHumanReviewer = (
             (r.rated_by && !r.rated_by.toLowerCase().includes('system')) ||
@@ -324,17 +324,16 @@ export async function syncInbound() {
             safeApprovalStatus = 'Approved';
           }
 
+          let safeRatedOn = (r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null));
+
           if (isTodayReport && safeApprovalStatus === 'Pending Review') {
             safeHeadRating = null;
             safeRatedBy = null;
             safeRatedOn = null;
             safeApprovalTimestamp = null;
             safeFinalScore = safeSysScore;
+            safeExpiryTimestamp = '04/10/2026 23:59:59';
           }
-
-          const safeRatedOn = (isTodayReport && safeApprovalStatus === 'Pending Review')
-            ? null
-            : (r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null));
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
           const safeFineReason = r.fine_reason || existing?.fine_reason || null;
           const safeFineDocUrl = r.fine_doc_url || existing?.fine_doc_url || null;
@@ -499,17 +498,17 @@ export async function syncOutbound() {
         hasEod ? mergeOutboundVal(r.eod_data, 4) : '',
         hasEod ? mergeOutboundVal(r.system_score, 5) : '',
         mergeOutboundVal(formattedLastUpdated, 6, `'${formatIndianDateTime()}`),
-        hasEod ? mergeOutboundVal(r.head_rating, 7) : '',
+        hasEod ? (safeOutboundStatus === 'Pending Review' ? (r.head_rating != null ? r.head_rating : '') : mergeOutboundVal(r.head_rating, 7)) : '',
         hasEod ? mergeOutboundVal(r.final_score, 8) : '',
         mergeOutboundVal(r.attendance, 9, 'Present'),
         mergeOutboundVal(r.overtime, 10, 0),
         mergeOutboundVal(safeTs(r.rating_last_updated), 11),
         mergeOutboundVal(r.rating_edited_by, 12),
         safeOutboundStatus,
-        mergeOutboundVal(safeTs(r.approval_timestamp), 14),
+        safeOutboundStatus === 'Pending Review' ? '' : mergeOutboundVal(safeTs(r.approval_timestamp), 14),
         mergeOutboundVal(safeTs(r.expiry_timestamp), 15),
-        mergeOutboundVal(r.rated_by, 16),
-        mergeOutboundVal(safeTs(r.rated_on), 17),
+        safeOutboundStatus === 'Pending Review' ? '' : mergeOutboundVal(r.rated_by, 16),
+        safeOutboundStatus === 'Pending Review' ? '' : mergeOutboundVal(safeTs(r.rated_on), 17),
         mergeOutboundVal(r.fine_amount, 18),
         mergeOutboundVal(r.fine_reason, 19),
         mergeOutboundVal(r.fine_doc_url, 20),
@@ -529,7 +528,7 @@ export async function syncOutbound() {
         const dbHeadRating = r.head_rating != null ? String(r.head_rating) : '';
         
         const statusChanged = safeOutboundStatus && safeOutboundStatus !== sheetStatus;
-        const ratingChanged = dbHeadRating !== '' && dbHeadRating !== sheetHeadRating;
+        const ratingChanged = dbHeadRating !== sheetHeadRating;
 
         if (dbTs > sheetTs || statusChanged || ratingChanged) {
           batchUpdates.push({

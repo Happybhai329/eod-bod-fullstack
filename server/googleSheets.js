@@ -739,17 +739,17 @@ export async function syncDailyReportToSheets(report) {
     hasEod ? mergeVal(report.eod_data, 4) : '',                     // 4: EOD_Data
     hasEod ? mergeVal(report.system_score, 5) : '',                 // 5: System_Score_%
     mergeVal(formattedLastUpdated, 6, `'${formatIndianDateTime()}`), // 6: Last_Updated
-    hasEod ? mergeVal(report.head_rating, 7) : '',                  // 7: Head_Rating
+    hasEod ? (safeApprovalStatus === 'Pending Review' ? (report.head_rating != null ? report.head_rating : '') : mergeVal(report.head_rating, 7)) : '',                  // 7: Head_Rating
     hasEod ? mergeVal(report.final_score, 8) : '',                  // 8: Final_Score_%
     mergeVal(report.attendance, 9, 'Present'),                      // 9: Attendance
     mergeVal(report.overtime, 10, 0),                               // 10: Overtime
     mergeVal(safeTs(report.rating_last_updated), 11),               // 11: Rating_Last_Updated
     mergeVal(report.rating_edited_by, 12),                          // 12: Rating_Edited_By
     safeApprovalStatus,                                             // 13: Approval_Status
-    mergeVal(safeTs(report.approval_timestamp), 14),                // 14: Approval_Timestamp
+    safeApprovalStatus === 'Pending Review' ? '' : mergeVal(safeTs(report.approval_timestamp), 14),                // 14: Approval_Timestamp
     mergeVal(safeTs(report.expiry_timestamp), 15),                  // 15: Expiry_Timestamp
-    mergeVal(report.rated_by, 16),                                  // 16: Rated_By
-    mergeVal(safeTs(report.rated_on), 17),                          // 17: Rated_On
+    safeApprovalStatus === 'Pending Review' ? '' : mergeVal(report.rated_by, 16),                                  // 16: Rated_By
+    safeApprovalStatus === 'Pending Review' ? '' : mergeVal(safeTs(report.rated_on), 17),                          // 17: Rated_On
     mergeVal(report.fine_amount, 18),                               // 18: Fine_Amount
     mergeVal(report.fine_reason, 19),                               // 19: Fine_Reason
     mergeVal(report.fine_doc_url, 20),                              // 20: Fine_Document_URL
