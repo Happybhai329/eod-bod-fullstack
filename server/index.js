@@ -604,8 +604,10 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
       [empId, effectiveId]
     );
 
-    // Sort descending by date (latest date first)
-    allReports.sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));
+    // Sort descending by date (latest date first, strictly excluding any future dates)
+    const todayEndMs = new Date().setHours(23, 59, 59, 999);
+    const validReports = allReports.filter(r => parseDateToMs(r.date) <= todayEndMs);
+    validReports.sort((a, b) => parseDateToMs(b.date) - parseDateToMs(a.date));
 
     const todayStr = getTodayString();
 
@@ -640,10 +642,10 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
       };
     };
 
-    const sanitizedReports = allReports.map(sanitizeReport);
+    const sanitizedReports = validReports.map(sanitizeReport);
 
     // Apply date range filter to scores & metrics
-    const filteredReports = allReports.filter(r => isDateInFilter(r.date, filter));
+    const filteredReports = validReports.filter(r => isDateInFilter(r.date, filter));
     const sanitizedFilteredReports = filteredReports.map(sanitizeReport);
 
     const scores = filteredReports
@@ -744,8 +746,9 @@ app.get('/api/head/dashboard', async (req, res) => {
       return Boolean((rawBod && rawBod !== '' && rawBod !== '{}') || (rawEod && rawEod !== '' && rawEod !== '{}'));
     };
 
+    const todayEndMs = new Date().setHours(23, 59, 59, 999);
     const reports = allReports
-      .filter(r => managedEmpIds.has(r.employee_id) && hasValidSubmission(r))
+      .filter(r => managedEmpIds.has(r.employee_id) && hasValidSubmission(r) && parseDateToMs(r.date) <= todayEndMs)
       .map(r => ({
         ...r,
         employee_name: empMap[r.employee_id] || ''

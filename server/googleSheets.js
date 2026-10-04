@@ -42,9 +42,25 @@ export function normalizeDateToDDMMYYYY(dateVal) {
   if (ddmmyyyy) {
     const d = parseInt(ddmmyyyy[1], 10);
     const m = parseInt(ddmmyyyy[2], 10);
-    if (d > 12) return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${ddmmyyyy[3]}`;
-    if (m > 12) return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${ddmmyyyy[3]}`;
-    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${ddmmyyyy[3]}`;
+    const y = parseInt(ddmmyyyy[3], 10);
+    if (d > 12) return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
+    if (m > 12) return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${y}`;
+
+    // Both <= 12: Check if treating as DD/MM produces a future date (e.g. 08/11/2026 -> 8 Nov)
+    // In our system, no report can be from the future. If d/m/y is past todayEnd but m/d/y is <= todayEnd,
+    // it was entered in MM/DD/YYYY format and must be normalized to DD/MM/YYYY!
+    const todayEnd = new Date();
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const dateAsDDMM = new Date(y, m - 1, d, 23, 59, 59, 999);
+    if (dateAsDDMM.getTime() > todayEnd.getTime()) {
+      const dateAsMMDD = new Date(y, d - 1, m, 23, 59, 59, 999);
+      if (dateAsMMDD.getTime() <= todayEnd.getTime()) {
+        return `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}/${y}`;
+      }
+    }
+
+    return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`;
   }
 
   // ISO format: YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss
