@@ -91,7 +91,7 @@ export function formatIndianDateTime(d = new Date()) {
  * - ISO strings, Date objects, Excel serial numbers (30000..70000)
  * Returns epoch milliseconds, or null if unparseable.
  */
-export function parseTimestampSafe(val) {
+export function parseTimestampSafe(val, allowFuture = false) {
   if (val === null || val === undefined || val === '') return null;
   if (val instanceof Date) {
     const t = val.getTime();
@@ -124,17 +124,20 @@ export function parseTimestampSafe(val) {
     }
 
     let dObj = new Date(y, m - 1, d, hr, min, sec);
-    // If treating as DD/MM produces a future date, but swapping d and m produces a valid past date
-    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000 && d <= 12 && m <= 12) {
-      const swapped = new Date(y, d - 1, m, hr, min, sec);
-      if (!isNaN(swapped.getTime()) && swapped.getTime() <= nowMs + 3600000) {
-        dObj = swapped;
+    
+    if (!allowFuture) {
+      // If treating as DD/MM produces a future date, but swapping d and m produces a valid past date
+      if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000 && d <= 12 && m <= 12) {
+        const swapped = new Date(y, d - 1, m, hr, min, sec);
+        if (!isNaN(swapped.getTime()) && swapped.getTime() <= nowMs + 3600000) {
+          dObj = swapped;
+        }
       }
-    }
 
-    // Hard ceiling: no report/update timestamp can legitimately be in the future
-    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000) {
-      return nowMs;
+      // Hard ceiling: no report/update timestamp can legitimately be in the future
+      if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000) {
+        return nowMs;
+      }
     }
 
     return isNaN(dObj.getTime()) ? null : dObj.getTime();
@@ -151,15 +154,17 @@ export function parseTimestampSafe(val) {
     const sec = isoMatch[6] ? parseInt(isoMatch[6], 10) : 0;
 
     let dObj = new Date(y, m - 1, d, hr, min, sec);
-    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000 && d <= 12 && m <= 12) {
-      const swapped = new Date(y, d - 1, m, hr, min, sec);
-      if (!isNaN(swapped.getTime()) && swapped.getTime() <= nowMs + 3600000) {
-        dObj = swapped;
+    if (!allowFuture) {
+      if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000 && d <= 12 && m <= 12) {
+        const swapped = new Date(y, d - 1, m, hr, min, sec);
+        if (!isNaN(swapped.getTime()) && swapped.getTime() <= nowMs + 3600000) {
+          dObj = swapped;
+        }
       }
-    }
 
-    if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000) {
-      return nowMs;
+      if (!isNaN(dObj.getTime()) && dObj.getTime() > nowMs + 3600000) {
+        return nowMs;
+      }
     }
 
     return isNaN(dObj.getTime()) ? null : dObj.getTime();
@@ -169,7 +174,7 @@ export function parseTimestampSafe(val) {
   const d = new Date(s);
   const t = d.getTime();
   if (isNaN(t)) return null;
-  if (t > nowMs + 3600000) return nowMs;
+  if (!allowFuture && t > nowMs + 3600000) return nowMs;
   return t;
 }
 

@@ -729,10 +729,23 @@ app.get('/api/head/dashboard', async (req, res) => {
       if (e.emp_id && e.name) empMap[e.emp_id] = e.name;
     });
 
-    let sql = `SELECT * FROM daily_reports WHERE eod_data IS NOT NULL AND eod_data != '' AND eod_data != '{}' AND eod_data != 'null'`;
+    let sql = `SELECT * FROM daily_reports WHERE (
+      (bod_data IS NOT NULL AND bod_data != '' AND bod_data != '{}' AND bod_data != 'null') OR
+      (eod_data IS NOT NULL AND eod_data != '' AND eod_data != '{}' AND eod_data != 'null') OR
+      (approval_status IS NOT NULL AND approval_status != '')
+    )`;
     const allReports = await query(sql);
+
+    const hasValidSubmission = (r) => {
+      if (!r) return false;
+      if (r.approval_status === 'Approved' || r.approval_status === 'Auto Approved' || r.approval_status === 'Pending Review' || r.approval_status === 'Pending EOD') return true;
+      const rawBod = r.bod_data || r.bodData;
+      const rawEod = r.eod_data || r.eodData;
+      return Boolean((rawBod && rawBod !== '' && rawBod !== '{}') || (rawEod && rawEod !== '' && rawEod !== '{}'));
+    };
+
     const reports = allReports
-      .filter(r => managedEmpIds.has(r.employee_id) && hasValidEod(r))
+      .filter(r => managedEmpIds.has(r.employee_id) && hasValidSubmission(r))
       .map(r => ({
         ...r,
         employee_name: empMap[r.employee_id] || ''

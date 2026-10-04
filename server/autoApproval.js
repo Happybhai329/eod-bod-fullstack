@@ -68,7 +68,22 @@ async function processCandidateReports(reports, now) {
       continue;
     }
 
-    let expiryTime = parseTimestampSafe(r.expiry_timestamp);
+    // Determine review window floor:
+    // A daily report for date D represents work for that day.
+    // The manager review window MUST give the head the ENTIRE next day (until 23:59:59 of Date D + 1) to review!
+    // Example: For 03/10/2026, the review window is OPEN all through 04/10/2026 until 23:59:59.
+    let minReviewExpiry = null;
+    const normDateStr = normalizeDateToDDMMYYYY(r.date);
+    const dParts = normDateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (dParts) {
+      const rDay = parseInt(dParts[1], 10);
+      const rMonth = parseInt(dParts[2], 10) - 1;
+      const rYear = parseInt(dParts[3], 10);
+      // Next day end (23:59:59.999): Day D + 1
+      minReviewExpiry = new Date(rYear, rMonth, rDay + 1, 23, 59, 59, 999).getTime();
+    }
+
+    let expiryTime = parseTimestampSafe(r.expiry_timestamp, true);
     if (!expiryTime && r.eod_submitted_at) {
       const eodSub = parseTimestampSafe(r.eod_submitted_at);
       if (eodSub) expiryTime = eodSub + REVIEW_WINDOW_MS;
@@ -77,26 +92,15 @@ async function processCandidateReports(reports, now) {
       const lu = parseTimestampSafe(r.last_updated);
       if (lu) expiryTime = lu + REVIEW_WINDOW_MS;
     }
-    // Fallback: report date + 48 hours (gives full 24h review window after end of day D)
+    // Fallback: report date + 48 hours
     if (!expiryTime && r.date) {
       const rd = parseTimestampSafe(r.date);
       if (rd) expiryTime = rd + (48 * 60 * 60 * 1000);
     }
 
-    // Hard safeguard: If report date is more than 48 hours in the past, it is expired
-    if (r.date) {
-      const rd = parseTimestampSafe(r.date);
-      if (rd && (now - rd) > (48 * 60 * 60 * 1000)) {
-        expiryTime = Math.min(expiryTime || Infinity, rd + (48 * 60 * 60 * 1000));
-      }
-    }
-
-    // Safety floor: A report for date D can NEVER expire before date D + 24 hours
-    if (r.date) {
-      const rd = parseTimestampSafe(r.date);
-      if (rd && expiryTime && expiryTime < rd + (24 * 60 * 60 * 1000)) {
-        expiryTime = rd + (24 * 60 * 60 * 1000);
-      }
+    // Safety floor: A report for date D can NEVER expire before 23:59:59 of date D+1
+    if (minReviewExpiry) {
+      expiryTime = Math.max(expiryTime || 0, minReviewExpiry);
     }
 
     if (expiryTime && now > expiryTime) {

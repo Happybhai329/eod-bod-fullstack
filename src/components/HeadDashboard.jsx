@@ -227,7 +227,8 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
         r.date.includes(searchTerm);
 
       const matchesStatus = statusFilter === 'All' ||
-        (statusFilter === 'Pending' && r.approval_status === 'Pending Review') ||
+        (statusFilter === 'Pending' && (r.approval_status === 'Pending Review' || r.approval_status === 'Pending EOD')) ||
+        (statusFilter === 'Pending EOD' && r.approval_status === 'Pending EOD') ||
         (statusFilter === 'Approved' && r.approval_status === 'Approved') ||
         (statusFilter === 'Auto Approved' && r.approval_status === 'Auto Approved') ||
         (statusFilter === 'EOD Missed' && r.approval_status === 'EOD Missed');
@@ -419,6 +420,7 @@ export default function HeadDashboard({ user, showToast, onOpenForm, onOpenConfi
             >
               <option value="All">All Statuses</option>
               <option value="Pending">Pending Review</option>
+              <option value="Pending EOD">Pending EOD (Awaiting Evening)</option>
               <option value="Approved">Approved</option>
               <option value="Auto Approved">Auto Approved</option>
             </select>

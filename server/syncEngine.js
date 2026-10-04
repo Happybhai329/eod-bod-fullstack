@@ -235,9 +235,30 @@ export async function syncInbound() {
             [dateNorm, empId]
           );
           
+          const isReviewWindowOpen = (reportDateStr) => {
+            const parts = String(reportDateStr).split('/');
+            if (parts.length !== 3) return false;
+            const rDay = Number(parts[0]);
+            const rMonth = Number(parts[1]) - 1;
+            const rYear = Number(parts[2]);
+            const nextDayEnd = new Date(rYear, rMonth, rDay + 1, 23, 59, 59, 999).getTime();
+            return Date.now() <= nextDayEnd;
+          };
+          const reviewWindowOpen = isReviewWindowOpen(dateNorm);
+
+          const isHumanReviewer = (
+            (r.rated_by && !r.rated_by.toLowerCase().includes('system')) ||
+            (existing?.rated_by && !existing.rated_by.toLowerCase().includes('system')) ||
+            (existing?.rating_edited_by && !existing.rating_edited_by.toLowerCase().includes('system')) ||
+            (r.rating_edited_by && !r.rating_edited_by.toLowerCase().includes('system'))
+          );
+
           if (existing && toTimestampMs(existing.last_updated) > toTimestampMs(r.last_updated)) {
-            summary.skippedNewerInDb++;
-            return; // DB is newer — don't overwrite
+            const isPrematureAutoApproved = (existing.approval_status === 'Auto Approved' && reviewWindowOpen && !isHumanReviewer);
+            if (!isPrematureAutoApproved) {
+              summary.skippedNewerInDb++;
+              return; // DB is newer — don't overwrite
+            }
           }
 
           // Merge: if Sheets has null/empty for a field, but DB already has a value, keep DB value!
@@ -249,8 +270,8 @@ export async function syncInbound() {
           const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
           let safeApprovalStatus = r.approval_status || existing?.approval_status;
           
-          // Safeguard 0: Today's reports can NEVER be Auto Approved on the same day!
-          if (isTodayReport && safeApprovalStatus === 'Auto Approved') {
+          // Safeguard 0: Reports whose review window is still open can NEVER be Auto Approved!
+          if ((isTodayReport || reviewWindowOpen) && safeApprovalStatus === 'Auto Approved' && !isHumanReviewer) {
             safeApprovalStatus = hasEod ? 'Pending Review' : 'Pending EOD';
           }
 
@@ -300,12 +321,6 @@ export async function syncInbound() {
           const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
           let safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
           let safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
-          
-          const isHumanReviewer = (
-            (r.rated_by && !r.rated_by.toLowerCase().includes('system')) ||
-            (existing?.rated_by && !existing.rated_by.toLowerCase().includes('system')) ||
-            (safeRatingEditedBy && !safeRatingEditedBy.toLowerCase().includes('system'))
-          );
 
           let safeRatedBy = null;
           if (r.rated_by && !r.rated_by.toLowerCase().includes('system')) {
@@ -326,13 +341,19 @@ export async function syncInbound() {
 
           let safeRatedOn = (r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null));
 
-          if (isTodayReport && safeApprovalStatus === 'Pending Review') {
+          if ((isTodayReport || reviewWindowOpen) && safeApprovalStatus === 'Pending Review' && !isHumanReviewer) {
             safeHeadRating = null;
             safeRatedBy = null;
             safeRatedOn = null;
             safeApprovalTimestamp = null;
             safeFinalScore = safeSysScore;
-            safeExpiryTimestamp = '04/10/2026 23:59:59';
+            const parts = String(dateNorm).split('/');
+            if (parts.length === 3) {
+              const rDay = Number(parts[0]);
+              const rMonth = Number(parts[1]) - 1;
+              const rYear = Number(parts[2]);
+              safeExpiryTimestamp = new Date(rYear, rMonth, rDay + 1, 23, 59, 59, 999).toISOString();
+            }
           }
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
           const safeFineReason = r.fine_reason || existing?.fine_reason || null;
