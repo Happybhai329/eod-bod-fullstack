@@ -111,11 +111,11 @@ export default function App() {
   };
 
   // Save BOD/EOD report
-  const handleSaveReport = async (phase, phaseData) => {
+  const handleSaveReport = async (phase, phaseData, reportDate) => {
     const res = await fetch(`/api/employee/${user.id}/report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phase, phaseData })
+      body: JSON.stringify({ phase, phaseData, reportDate })
     });
     const data = await res.json();
     if (!data.success) {

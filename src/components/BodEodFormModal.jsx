@@ -1012,7 +1012,7 @@ export default function BodEodFormModal({
       pdfHtml += `</table></div>`;
 
       // Save via API
-      await onSave(phase, fData);
+      await onSave(phase, fData, currDate);
 
       // Open Success & Share modal
       setShareData({ waText, pdfHtml });

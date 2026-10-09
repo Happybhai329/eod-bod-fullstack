@@ -61,6 +61,31 @@ function safeJsonString(val) {
 }
 
 /**
+ * Check if a data field has valid, non-empty content (JSON object or non-empty string).
+ */
+function hasNonEmptyData(data) {
+  if (!data) return false;
+  if (typeof data === 'object') {
+    return Object.keys(data).length > 0;
+  }
+  if (typeof data === 'string') {
+    const trimmed = data.trim();
+    if (!trimmed || trimmed === '{}' || trimmed === '[]' || trimmed === 'null' || trimmed === '""' || trimmed === 'undefined') {
+      return false;
+    }
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return Object.keys(parsed).length > 0;
+      }
+    } catch (_) {
+      return trimmed.length > 2;
+    }
+  }
+  return false;
+}
+
+/**
  * 1. INBOUND SYNC: Google Sheets -> Database
  * 
  * Rules:
@@ -234,6 +259,12 @@ export async function syncInbound() {
             `SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`,
             [dateNorm, empId]
           );
+
+          // Check if DB and Sheets have valid, non-empty BOD and EOD data
+          const dbHasBod = hasNonEmptyData(existing?.bod_data || existing?.bodData);
+          const dbHasEod = hasNonEmptyData(existing?.eod_data || existing?.eodData);
+          const sheetHasBod = hasNonEmptyData(r.bod_data);
+          const sheetHasEod = hasNonEmptyData(r.eod_data);
           
           const isReviewWindowOpen = (reportDateStr) => {
             const parts = String(reportDateStr).split('/');
@@ -256,105 +287,139 @@ export async function syncInbound() {
           if (existing && toTimestampMs(existing.last_updated) > toTimestampMs(r.last_updated)) {
             const isPrematureAutoApproved = (existing.approval_status === 'Auto Approved' && reviewWindowOpen && !isHumanReviewer);
             if (!isPrematureAutoApproved) {
+              // If DB has EOD but Google Sheets is missing it, trigger outbound sync to repair missing row
+              if (dbHasEod && !sheetHasEod) {
+                syncDailyReportToSheets(existing).catch(err => {
+                  console.warn(`[Sync Inbound Repair] Failed to repair Google Sheets for ${empId} on ${dateNorm}:`, err.message);
+                });
+              }
               summary.skippedNewerInDb++;
               return; // DB is newer — don't overwrite
             }
           }
 
-          // Merge: if Sheets has null/empty for a field, but DB already has a value, keep DB value!
-          const safeBod = (r.bod_data && r.bod_data !== '' && r.bod_data !== '{}') ? safeJsonString(r.bod_data) : (existing?.bod_data || null);
-          const safeEod = (r.eod_data && r.eod_data !== '' && r.eod_data !== '{}' && r.eod_data !== 'null') ? safeJsonString(r.eod_data) : (existing?.eod_data || null);
+          // NEVER overwrite non-empty database bod_data or eod_data with empty string "" or {} from Google Sheets
+          const safeBod = sheetHasBod
+            ? safeJsonString(r.bod_data)
+            : (dbHasBod ? safeJsonString(existing.bod_data || existing.bodData) : null);
+          const safeEod = sheetHasEod
+            ? safeJsonString(r.eod_data)
+            : (dbHasEod ? safeJsonString(existing.eod_data || existing.eodData) : null);
           const hasEod = Boolean(safeEod && safeEod !== '' && safeEod !== '{}' && safeEod !== 'null');
 
           const todayDateStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
           const isTodayReport = (dateNorm === todayDateStr || r.date === todayDateStr);
           let safeApprovalStatus = r.approval_status || existing?.approval_status;
-          
-          // Safeguard 0: Reports whose review window is still open can NEVER be Auto Approved!
-          if ((isTodayReport || reviewWindowOpen) && safeApprovalStatus === 'Auto Approved' && !isHumanReviewer) {
-            safeApprovalStatus = hasEod ? 'Pending Review' : 'Pending EOD';
-          }
 
-          // Safeguard 1: If DB is already 'Approved', it can NEVER be changed or downgraded to 'Auto Approved'
-          if (existing?.approval_status === 'Approved') {
-            safeApprovalStatus = 'Approved';
-          } else if (existing?.approval_status === 'Auto Approved') {
-            if (r.approval_status === 'Approved') {
-              safeApprovalStatus = 'Approved'; // Head manual approval upgrades Auto Approved
-            } else if (r.approval_status !== 'Approved' && r.approval_status !== 'Auto Approved') {
-              safeApprovalStatus = existing.approval_status;
-            }
-          }
-
-          // Safeguard 2: If EOD was submitted (or eod_submitted_at exists), it can NEVER be 'EOD Missed'
-          if (hasEod || existing?.eod_submitted_at) {
-            if (safeApprovalStatus === 'EOD Missed' || !safeApprovalStatus) {
-              safeApprovalStatus = (existing?.approval_status === 'Approved' || existing?.approval_status === 'Auto Approved')
-                ? existing.approval_status
-                : 'Pending Review';
-            }
-          } else {
-            if (isTodayReport) {
-              safeApprovalStatus = 'Pending EOD';
-            } else {
-              safeApprovalStatus = 'EOD Missed';
-            }
-          }
-
-          const safeSysScore = hasEod ? sanitizeScore(
-            r.system_score != null && r.system_score > 0
-              ? r.system_score
-              : (existing?.system_score && existing.system_score > 0 ? existing.system_score : null)
-          ) : null;
-          let safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Approved' ? 100 : null))) : null;
-          let safeFinalScore = hasEod ? sanitizeScore(
-            r.final_score != null && r.final_score > 0
-              ? r.final_score
-              : (existing?.final_score && existing.final_score > 0 ? existing.final_score : safeSysScore)
-          ) : null;
-          if (hasEod && (!safeFinalScore || safeFinalScore === 0) && safeSysScore > 0) {
-            safeFinalScore = safeSysScore;
-          }
-          const safeAttendance = r.attendance || existing?.attendance || 'Present';
-          const safeOvertime = r.overtime != null ? r.overtime : (existing?.overtime ?? 0);
-          const safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
-          const safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
+          let safeSysScore = null;
+          let safeHeadRating = null;
+          let safeFinalScore = null;
           let safeApprovalTimestamp = r.approval_timestamp || existing?.approval_timestamp || null;
           let safeExpiryTimestamp = r.expiry_timestamp || existing?.expiry_timestamp || null;
-
           let safeRatedBy = null;
-          if (r.rated_by && !r.rated_by.toLowerCase().includes('system')) {
-            safeRatedBy = r.rated_by;
-          } else if (existing?.rated_by && !existing.rated_by.toLowerCase().includes('system')) {
-            safeRatedBy = existing.rated_by;
-          } else if (safeRatingEditedBy && !safeRatingEditedBy.toLowerCase().includes('system')) {
-            safeRatedBy = safeRatingEditedBy;
-          } else if (safeApprovalStatus === 'Auto Approved') {
-            safeRatedBy = 'System (Auto Approval)';
+          let safeRatedOn = null;
+          let safeRatingUpdated = r.rating_last_updated || existing?.rating_last_updated || null;
+          let safeRatingEditedBy = r.rating_edited_by || existing?.rating_edited_by || null;
+          let safeBodSubmittedAt = existing?.bod_submitted_at || (safeBod ? (existing?.last_updated || existing?.createdAt || r.last_updated || new Date().toISOString()) : null);
+          let safeEodSubmittedAt = existing?.eod_submitted_at || (hasEod ? (existing?.last_updated || existing?.createdAt || r.last_updated || new Date().toISOString()) : null);
+
+          // SAFEGUARD: If the database already has EOD submitted, but the incoming Google Sheets row has empty EOD:
+          // Preserve the database's eod_data, system_score, final_score, and approval_status!
+          if (dbHasEod && !sheetHasEod) {
+            safeApprovalStatus = existing.approval_status;
+            safeSysScore = existing.system_score;
+            safeFinalScore = existing.final_score;
+            safeHeadRating = existing.head_rating ?? null;
+            safeRatedBy = existing.rated_by || null;
+            safeRatedOn = existing.rated_on || null;
+            safeApprovalTimestamp = existing.approval_timestamp || null;
+            safeExpiryTimestamp = existing.expiry_timestamp || null;
+            safeRatingUpdated = existing.rating_last_updated || safeRatingUpdated;
+            safeRatingEditedBy = existing.rating_edited_by || safeRatingEditedBy;
+            safeEodSubmittedAt = existing.eod_submitted_at || safeEodSubmittedAt;
           } else {
-            safeRatedBy = r.rated_by || existing?.rated_by || null;
-          }
+            // Safeguard 0: Reports whose review window is still open can NEVER be Auto Approved!
+            if ((isTodayReport || reviewWindowOpen) && safeApprovalStatus === 'Auto Approved' && !isHumanReviewer) {
+              safeApprovalStatus = hasEod ? 'Pending Review' : 'Pending EOD';
+            }
 
-          if (isHumanReviewer) {
-            safeApprovalStatus = 'Approved';
-          }
+            // Safeguard 1: If DB is already 'Approved', it can NEVER be changed or downgraded to 'Auto Approved'
+            if (existing?.approval_status === 'Approved') {
+              safeApprovalStatus = 'Approved';
+            } else if (existing?.approval_status === 'Auto Approved') {
+              if (r.approval_status === 'Approved') {
+                safeApprovalStatus = 'Approved'; // Head manual approval upgrades Auto Approved
+              } else if (r.approval_status !== 'Approved' && r.approval_status !== 'Auto Approved') {
+                safeApprovalStatus = existing.approval_status;
+              }
+            }
 
-          let safeRatedOn = (r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null));
+            // Safeguard 2: If EOD was submitted (or eod_submitted_at exists), it can NEVER be 'EOD Missed'
+            if (hasEod || existing?.eod_submitted_at) {
+              if (safeApprovalStatus === 'EOD Missed' || !safeApprovalStatus) {
+                safeApprovalStatus = (existing?.approval_status === 'Approved' || existing?.approval_status === 'Auto Approved')
+                  ? existing.approval_status
+                  : 'Pending Review';
+              }
+            } else {
+              if (isTodayReport) {
+                safeApprovalStatus = 'Pending EOD';
+              } else {
+                safeApprovalStatus = 'EOD Missed';
+              }
+            }
 
-          if ((isTodayReport || reviewWindowOpen) && safeApprovalStatus === 'Pending Review' && !isHumanReviewer) {
-            safeHeadRating = null;
-            safeRatedBy = null;
-            safeRatedOn = null;
-            safeApprovalTimestamp = null;
-            safeFinalScore = safeSysScore;
-            const parts = String(dateNorm).split('/');
-            if (parts.length === 3) {
-              const rDay = Number(parts[0]);
-              const rMonth = Number(parts[1]) - 1;
-              const rYear = Number(parts[2]);
-              safeExpiryTimestamp = new Date(rYear, rMonth, rDay + 1, 23, 59, 59, 999).toISOString();
+            safeSysScore = hasEod ? sanitizeScore(
+              r.system_score != null && r.system_score > 0
+                ? r.system_score
+                : (existing?.system_score && existing.system_score > 0 ? existing.system_score : null)
+            ) : null;
+            safeHeadRating = hasEod ? (r.head_rating != null ? r.head_rating : (existing?.head_rating ?? (safeApprovalStatus === 'Auto Approved' || safeApprovalStatus === 'Approved' ? 100 : null))) : null;
+            safeFinalScore = hasEod ? sanitizeScore(
+              r.final_score != null && r.final_score > 0
+                ? r.final_score
+                : (existing?.final_score && existing.final_score > 0 ? existing.final_score : safeSysScore)
+            ) : null;
+            if (hasEod && (!safeFinalScore || safeFinalScore === 0) && safeSysScore > 0) {
+              safeFinalScore = safeSysScore;
+            }
+
+            if (r.rated_by && !r.rated_by.toLowerCase().includes('system')) {
+              safeRatedBy = r.rated_by;
+            } else if (existing?.rated_by && !existing.rated_by.toLowerCase().includes('system')) {
+              safeRatedBy = existing.rated_by;
+            } else if (safeRatingEditedBy && !safeRatingEditedBy.toLowerCase().includes('system')) {
+              safeRatedBy = safeRatingEditedBy;
+            } else if (safeApprovalStatus === 'Auto Approved') {
+              safeRatedBy = 'System (Auto Approval)';
+            } else {
+              safeRatedBy = r.rated_by || existing?.rated_by || null;
+            }
+
+            if (isHumanReviewer) {
+              safeApprovalStatus = 'Approved';
+            }
+
+            safeRatedOn = (r.rated_on || existing?.rated_on || (safeApprovalStatus === 'Auto Approved' ? (existing?.last_updated || new Date().toISOString()) : null));
+
+            if ((isTodayReport || reviewWindowOpen) && safeApprovalStatus === 'Pending Review' && !isHumanReviewer) {
+              safeHeadRating = null;
+              safeRatedBy = null;
+              safeRatedOn = null;
+              safeApprovalTimestamp = null;
+              safeFinalScore = safeSysScore;
+              const parts = String(dateNorm).split('/');
+              if (parts.length === 3) {
+                const rDay = Number(parts[0]);
+                const rMonth = Number(parts[1]) - 1;
+                const rYear = Number(parts[2]);
+                safeExpiryTimestamp = new Date(rYear, rMonth, rDay + 1, 23, 59, 59, 999).toISOString();
+              }
             }
           }
+
+          const safeAttendance = r.attendance || existing?.attendance || 'Present';
+          const safeOvertime = r.overtime != null ? r.overtime : (existing?.overtime ?? 0);
           const safeFineAmount = r.fine_amount != null ? r.fine_amount : (existing?.fine_amount ?? null);
           const safeFineReason = r.fine_reason || existing?.fine_reason || null;
           const safeFineDocUrl = r.fine_doc_url || existing?.fine_doc_url || null;
@@ -363,8 +428,6 @@ export async function syncInbound() {
           const safeFineIssuedBy = r.fine_issued_by || existing?.fine_issued_by || null;
           const safeFineStatus = r.fine_status || existing?.fine_status || null;
           const safeRemarks = r.employee_remarks || existing?.employee_remarks || null;
-          const safeBodSubmittedAt = existing?.bod_submitted_at || (safeBod ? (existing?.last_updated || existing?.createdAt || r.last_updated || new Date().toISOString()) : null);
-          const safeEodSubmittedAt = existing?.eod_submitted_at || (hasEod ? (existing?.last_updated || existing?.createdAt || r.last_updated || new Date().toISOString()) : null);
 
           await run(
             `INSERT OR REPLACE INTO daily_reports (
@@ -392,6 +455,42 @@ export async function syncInbound() {
               safeBodSubmittedAt, safeEodSubmittedAt
             ]
           );
+
+          // If the DB has EOD but Google Sheets is missing it, trigger an outbound sync to Google Sheets to repair the missing row
+          if (dbHasEod && !sheetHasEod) {
+            syncDailyReportToSheets({
+              date: dateNorm,
+              employee_id: empId,
+              department: r.department || existing?.department || '',
+              bod_data: safeBod,
+              eod_data: safeEod,
+              system_score: safeSysScore,
+              last_updated: existing?.last_updated || new Date().toISOString(),
+              head_rating: safeHeadRating,
+              final_score: safeFinalScore,
+              attendance: safeAttendance,
+              overtime: safeOvertime,
+              rating_last_updated: safeRatingUpdated,
+              rating_edited_by: safeRatingEditedBy,
+              approval_status: safeApprovalStatus,
+              approval_timestamp: safeApprovalTimestamp,
+              expiry_timestamp: safeExpiryTimestamp,
+              rated_by: safeRatedBy,
+              rated_on: safeRatedOn,
+              fine_amount: safeFineAmount,
+              fine_reason: safeFineReason,
+              fine_doc_url: safeFineDocUrl,
+              fine_doc_name: safeFineDocName,
+              fine_issued_on: safeFineIssuedOn,
+              fine_issued_by: safeFineIssuedBy,
+              fine_status: safeFineStatus,
+              employee_remarks: safeRemarks,
+              bod_submitted_at: safeBodSubmittedAt,
+              eod_submitted_at: safeEodSubmittedAt
+            }).catch(err => {
+              console.warn(`[Sync Inbound Repair] Failed to repair Google Sheets for ${empId} on ${dateNorm}:`, err.message);
+            });
+          }
           summary.reports++;
         } catch (err) {
           summary.errors++;

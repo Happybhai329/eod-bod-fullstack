@@ -13,7 +13,8 @@ import {
   fetchAssignedTasks,
   updateAssignedChecklist,
   updateAssignedSubTask,
-  submitAssignedTask
+  submitAssignedTask,
+  normalizeDateToDDMMYYYY
 } from './googleSheets.js';
 import { startAutoSync, runTwoWaySync, getSyncStatus } from './syncEngine.js';
 import { checkAutoApprovals, checkEmployeeAutoApprovals } from './autoApproval.js';
@@ -44,12 +45,26 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Safe non-blocking sync helpers
-function asyncSyncReport(report) {
+// Safe non-blocking sync helpers with retry & backoff
+async function asyncSyncReport(report) {
   if (!report) return;
-  syncDailyReportToSheets(report).catch(err => {
-    console.warn('[Sync Outbox] Report sync notice (ignored):', err.message);
-  });
+  const backoffDelays = [2000, 5000, 10000];
+  const maxRetries = 3;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      await syncDailyReportToSheets(report);
+      return;
+    } catch (err) {
+      if (attempt < maxRetries) {
+        const delay = backoffDelays[attempt] || 10000;
+        console.warn(`[Sync Outbox] Retrying sync for ${report.employee_id} on ${report.date} (attempt ${attempt + 1}/${maxRetries}) in ${delay}ms: ${err.message}`);
+        await new Promise(res => setTimeout(res, delay));
+      } else {
+        console.warn(`[Sync Outbox] Failed to sync report for ${report.employee_id} on ${report.date}: ${err.message}`);
+      }
+    }
+  }
 }
 
 function asyncSyncFine(fine) {
@@ -439,17 +454,19 @@ app.get('/api/employee/:id/form', async (req, res) => {
 app.post('/api/employee/:id/report', async (req, res) => {
   try {
     const empId = req.params.id;
-    const { phase, phaseData } = req.body;
+    const { phase, phaseData, reportDate } = req.body;
     if (!['BOD', 'EOD'].includes(phase)) return res.status(400).json({ success: false, message: 'Invalid report phase.' });
 
     const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
     const effectiveId = emp.emp_id || emp.id;
-    const todayStr = getTodayString();
+    const targetDate = (reportDate && typeof reportDate === 'string' && reportDate.trim() !== '')
+      ? normalizeDateToDDMMYYYY(reportDate.trim())
+      : getTodayString();
     const now = new Date();
     const safePhaseJSON = JSON.stringify(phaseData);
-    const existing = await get(`SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`, [todayStr, emp.id, effectiveId]);
+    const existing = await get(`SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`, [targetDate, emp.id, effectiveId]);
 
     let savedReport = null;
     if (!existing) {
@@ -457,12 +474,12 @@ app.post('/api/employee/:id/report', async (req, res) => {
         if (getIsPostgres()) {
           await run(
             `INSERT INTO daily_reports (date, employee_id, department, bod_data, "bodData", last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)`,
-            [todayStr, effectiveId, emp.department, safePhaseJSON, safePhaseJSON, now.toISOString(), now.toISOString()]
+            [targetDate, effectiveId, emp.department, safePhaseJSON, safePhaseJSON, now.toISOString(), now.toISOString()]
           );
         } else {
           await run(
             `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?, ?)`,
-            [todayStr, effectiveId, emp.department, safePhaseJSON, now.toISOString(), now.toISOString()]
+            [targetDate, effectiveId, emp.department, safePhaseJSON, now.toISOString(), now.toISOString()]
           );
         }
       } else {
@@ -474,7 +491,7 @@ app.post('/api/employee/:id/report', async (req, res) => {
       }
       savedReport = await get(
         `SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`,
-        [todayStr, emp.id, effectiveId]
+        [targetDate, emp.id, effectiveId]
       );
     } else {
       if (existing.approval_status === 'Approved' || existing.approval_status === 'Auto Approved') {
