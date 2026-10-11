@@ -111,18 +111,33 @@ function parseTimestampToMs(val) {
   // Match DD/MM/YYYY HH:mm:ss with optional AM/PM (e.g. from Google Sheets or code.gs)
   const ddmmyyyyTime = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?(?:\s*(AM|PM))?/i);
   if (ddmmyyyyTime) {
-    const day = ddmmyyyyTime[1].padStart(2, '0');
-    const month = ddmmyyyyTime[2].padStart(2, '0');
-    const year = ddmmyyyyTime[3];
+    let day = parseInt(ddmmyyyyTime[1], 10);
+    let month = parseInt(ddmmyyyyTime[2], 10);
+    const year = parseInt(ddmmyyyyTime[3], 10);
     let hours = ddmmyyyyTime[4] ? parseInt(ddmmyyyyTime[4], 10) : 0;
     const minutes = ddmmyyyyTime[5] ? ddmmyyyyTime[5].padStart(2, '0') : '00';
     const seconds = ddmmyyyyTime[6] ? ddmmyyyyTime[6].padStart(2, '0') : '00';
     const ampm = ddmmyyyyTime[7]?.toUpperCase();
     if (ampm === 'PM' && hours < 12) hours += 12;
     if (ampm === 'AM' && hours === 12) hours = 0;
+
+    // Ambiguity resolution: If treating as DD/MM gives a future date (> now), but MM/DD is in past/present, swap them
+    const nowMs = Date.now();
+    const testDate = new Date(`${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${minutes}:${seconds}+05:30`);
+    if (testDate.getTime() > nowMs && day <= 12 && month <= 12) {
+      const swappedDate = new Date(`${year}-${String(day).padStart(2, '0')}-${String(month).padStart(2, '0')}T${String(hours).padStart(2, '0')}:${minutes}:${seconds}+05:30`);
+      if (swappedDate.getTime() <= nowMs) {
+        const temp = day;
+        day = month;
+        month = temp;
+      }
+    }
+
+    const dayStr = String(day).padStart(2, '0');
+    const monthStr = String(month).padStart(2, '0');
     const hrsStr = String(hours).padStart(2, '0');
     // Parse as India Standard Time (+05:30)
-    const isoString = `${year}-${month}-${day}T${hrsStr}:${minutes}:${seconds}+05:30`;
+    const isoString = `${year}-${monthStr}-${dayStr}T${hrsStr}:${minutes}:${seconds}+05:30`;
     const d = new Date(isoString);
     if (!isNaN(d.getTime())) return d.getTime();
   }
@@ -396,8 +411,9 @@ app.get('/api/employee/:id/form', async (req, res) => {
         if (todayStatus.bodFilled) {
           const rawBodTime = todayReport.bod_submitted_at || todayReport.createdAt || todayReport.created_at || todayReport.last_updated;
           const bodFirstTime = parseTimestampToMs(rawBodTime);
-          const bodTimeMs = bodFirstTime > 0 ? bodFirstTime : now;
-          const bodRemaining = bodTimeMs + BOD_EDIT_WINDOW_MS - now;
+          const bodTimeMs = (bodFirstTime > 0 && bodFirstTime <= now) ? bodFirstTime : now;
+          const rawBodRemaining = bodTimeMs + BOD_EDIT_WINDOW_MS - now;
+          const bodRemaining = Math.min(BOD_EDIT_WINDOW_MS, Math.max(0, rawBodRemaining));
           if (bodRemaining > 0) {
             todayStatus.bodEditable = true;
             todayStatus.bodRemainingMs = bodRemaining;
@@ -414,8 +430,9 @@ app.get('/api/employee/:id/form', async (req, res) => {
         if (todayStatus.eodFilled) {
           const rawEodTime = todayReport.eod_submitted_at || todayReport.last_updated;
           const eodFirstTime = parseTimestampToMs(rawEodTime);
-          const eodTimeMs = eodFirstTime > 0 ? eodFirstTime : now;
-          const eodRemaining = eodTimeMs + EOD_EDIT_WINDOW_MS - now;
+          const eodTimeMs = (eodFirstTime > 0 && eodFirstTime <= now) ? eodFirstTime : now;
+          const rawEodRemaining = eodTimeMs + EOD_EDIT_WINDOW_MS - now;
+          const eodRemaining = Math.min(EOD_EDIT_WINDOW_MS, Math.max(0, rawEodRemaining));
           if (eodRemaining > 0) {
             todayStatus.eodEditable = true;
             todayStatus.eodRemainingMs = eodRemaining;
