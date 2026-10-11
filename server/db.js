@@ -143,6 +143,12 @@ export function formatSql(sql) {
   if (/INSERT\s+OR\s+REPLACE\s+INTO/i.test(s)) {
     s = transformInsertOrReplace(s);
   }
+  // PostgreSQL UUID safety: In Supabase, employees.id has data type `uuid`.
+  // When queries compare `id = ?` or `(id = ?` with non-UUID strings (such as employee codes like
+  // TPC26005HB or employee names), PostgreSQL throws: "invalid input syntax for type uuid".
+  // Casting `id` to text via `CAST(id AS text)` prevents fatal type errors and allows seamless string comparison.
+  s = s.replace(/\b(?:employees\.)?id\s*=\s*\?/gi, 'CAST(id AS text) = ?');
+
   let index = 0;
   return s.replace(/\?/g, () => `$${++index}`);
 }

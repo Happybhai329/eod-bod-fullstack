@@ -226,7 +226,7 @@ app.post('/api/auth/login', async (req, res) => {
 
     const trimmedId = empId.trim();
     const emp = await get(
-      `SELECT * FROM employees WHERE id = ? OR emp_id = ? OR LOWER(name) = LOWER(?)`,
+      `SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ? OR LOWER(name) = LOWER(?)`,
       [trimmedId, trimmedId, trimmedId]
     );
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found in system.' });
@@ -282,14 +282,14 @@ app.post('/api/structure/assign', async (req, res) => {
     if (!subDeptName || !headId) return res.status(400).json({ success: false, message: 'Sub-department name and head ID required.' });
     
     if (requesterId) {
-      const requester = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [requesterId, requesterId]);
+      const requester = await get(`SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [requesterId, requesterId]);
       const isAdmin = requester && (requester.role.toLowerCase().includes('admin') || requester.role.toLowerCase().includes('director'));
       if (!isAdmin) {
         return res.status(403).json({ success: false, message: 'Unauthorized: Only System Administrators can reassign department heads.' });
       }
     }
 
-    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
+    const emp = await get(`SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [headId, headId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
     const effectiveId = emp.emp_id || emp.id;
@@ -308,7 +308,7 @@ app.post('/api/structure/remove', async (req, res) => {
   try {
     const { subDeptName, requesterId } = req.body;
     if (requesterId) {
-      const requester = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [requesterId, requesterId]);
+      const requester = await get(`SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [requesterId, requesterId]);
       const isAdmin = requester && (requester.role.toLowerCase().includes('admin') || requester.role.toLowerCase().includes('director'));
       if (!isAdmin) {
         return res.status(403).json({ success: false, message: 'Unauthorized: Only System Administrators can remove department heads.' });
@@ -334,7 +334,7 @@ app.get('/api/employee/:id/form', async (req, res) => {
     // Non-blocking auto-approval check in background
     checkAutoApprovals().catch(err => console.warn('[Auto Approval] Background check notice:', err.message));
     const empId = req.params.id;
-    const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
+    const emp = await get(`SELECT * FROM employees WHERE (CAST(id AS text) = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found or inactive.' });
 
     let userConfig = await get(
@@ -457,7 +457,7 @@ app.post('/api/employee/:id/report', async (req, res) => {
     const { phase, phaseData, reportDate } = req.body;
     if (!['BOD', 'EOD'].includes(phase)) return res.status(400).json({ success: false, message: 'Invalid report phase.' });
 
-    const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
+    const emp = await get(`SELECT * FROM employees WHERE (CAST(id AS text) = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     if (!emp) return res.status(404).json({ success: false, message: 'Employee not found.' });
 
     const effectiveId = emp.emp_id || emp.id;
@@ -607,7 +607,7 @@ app.post('/api/employee/:id/report', async (req, res) => {
 app.get('/api/employee/:id/dashboard', async (req, res) => {
   try {
     const empId = req.params.id;
-    const emp = await get(`SELECT * FROM employees WHERE (id = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
+    const emp = await get(`SELECT * FROM employees WHERE (CAST(id AS text) = ? OR emp_id = ?) AND LOWER(status) = 'active'`, [empId, empId]);
     const effectiveId = emp ? (emp.emp_id || emp.id) : empId;
     await checkEmployeeAutoApprovals(effectiveId);
     const { filter = 'Weekly' } = req.query;
@@ -699,7 +699,7 @@ app.get('/api/head/dashboard', async (req, res) => {
 
     const trimmedHeadId = headId.trim();
     const headEmp = await get(
-      `SELECT * FROM employees WHERE id = ? OR emp_id = ?`,
+      `SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`,
       [trimmedHeadId, trimmedHeadId]
     );
 
@@ -840,7 +840,7 @@ app.post('/api/head/rate', async (req, res) => {
       return res.status(400).json({ success: false, message: `Report is already ${report.approval_status.toLowerCase()} and locked.` });
     }
 
-    const headUser = await get(`SELECT name FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
+    const headUser = await get(`SELECT name FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [headId, headId]);
     const raterName = headUser ? headUser.name : 'Department Head';
     const sysScore = parseScoreHelper(report.system_score, 100);
     const finalScore = calculateFinalScore(sysScore, numRating);
@@ -942,7 +942,7 @@ app.post('/api/assigned-tasks/submit', async (req, res) => {
 app.get('/api/config/:id', async (req, res) => {
   try {
     const empId = req.params.id;
-    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [empId, empId]);
+    const emp = await get(`SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [empId, empId]);
     const id1 = emp ? emp.id : empId;
     const id2 = emp ? (emp.emp_id || emp.id) : empId;
     const configRow = await get(
@@ -959,7 +959,7 @@ app.get('/api/config/:id', async (req, res) => {
 app.post('/api/config/:id', async (req, res) => {
   try {
     const empId = req.params.id;
-    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [empId, empId]);
+    const emp = await get(`SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [empId, empId]);
     const effectiveEmpId = emp?.emp_id || empId;
     const { configJson } = req.body;
     const nowIso = new Date().toISOString();
@@ -1004,7 +1004,7 @@ app.post('/api/fines/issue', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Employee ID, Date, Amount, and Reason are required.' });
     }
 
-    const headUser = await get(`SELECT name FROM employees WHERE id = ? OR emp_id = ?`, [headId, headId]);
+    const headUser = await get(`SELECT name FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [headId, headId]);
     const issuerName = headUser ? headUser.name : 'Department Head';
     const fineId = 'F' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000);
     const nowIso = new Date().toISOString();
@@ -1096,7 +1096,7 @@ app.get('/api/fines/:id/document', async (req, res) => {
     const fine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
     if (!fine) return res.status(404).send('<h2>Fine notice not found.</h2>');
 
-    const emp = await get(`SELECT * FROM employees WHERE id = ? OR emp_id = ?`, [fine.employee_id, fine.employee_id]);
+    const emp = await get(`SELECT * FROM employees WHERE CAST(id AS text) = ? OR emp_id = ?`, [fine.employee_id, fine.employee_id]);
     const empName = emp ? emp.name : fine.employee_id;
     const dept = emp ? emp.department : 'Operations';
     const desig = emp ? emp.designation : 'Staff';
