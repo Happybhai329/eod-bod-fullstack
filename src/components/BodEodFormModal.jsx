@@ -515,9 +515,35 @@ export default function BodEodFormModal({
       }
     });
 
+    // Check if there is a local draft for today's phase and restore it if server data is empty
+    try {
+      const draftKey = `eod_bod_draft_${user?.id || 'emp'}_${phase}_${currDate}`;
+      const savedDraft = localStorage.getItem(draftKey);
+      if (savedDraft) {
+        const parsedDraft = JSON.parse(savedDraft);
+        if (parsedDraft && typeof parsedDraft === 'object' && Object.keys(parsedDraft).length > 0) {
+          for (const k in parsedDraft) {
+            const hasServerData = Boolean(findTaskData(phase === 'BOD' ? currentBodData : currentEodData, { taskName: k }));
+            if (!hasServerData && parsedDraft[k]) {
+              initialForm[k] = parsedDraft[k];
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
     setFormData(initialForm);
     setVoluntaryOpenMap(initialVolMap);
-  }, [isOpen, phase, visibleTasks, currentBodData, currentEodData, isLoadingConfig]);
+  }, [isOpen, phase, visibleTasks, currentBodData, currentEodData, isLoadingConfig, currDate, user?.id]);
+
+  // Auto-save draft to localStorage on every change so user inputs can NEVER be lost
+  useEffect(() => {
+    if (!isOpen || !formData || Object.keys(formData).length === 0) return;
+    try {
+      const draftKey = `eod_bod_draft_${user?.id || 'emp'}_${phase}_${currDate}`;
+      localStorage.setItem(draftKey, JSON.stringify(formData));
+    } catch (e) {}
+  }, [formData, isOpen, phase, currDate, user?.id]);
 
   // ==========================================
   // HANDLERS FOR DYNAMIC LIST
@@ -1011,14 +1037,32 @@ export default function BodEodFormModal({
 
       pdfHtml += `</table></div>`;
 
+      // Safety Vault: save full payload to localStorage before network request
+      try {
+        const vaultKey = `eod_bod_vault_${user?.id || 'emp'}_${phase}_${currDate}`;
+        localStorage.setItem(vaultKey, JSON.stringify({
+          savedAt: new Date().toISOString(),
+          phase,
+          data: fData,
+          waText,
+          pdfHtml
+        }));
+      } catch (e) {}
+
       // Save via API
       await onSave(phase, fData, currDate);
+
+      // Clean up temporary draft on successful submission
+      try {
+        const draftKey = `eod_bod_draft_${user?.id || 'emp'}_${phase}_${currDate}`;
+        localStorage.removeItem(draftKey);
+      } catch (e) {}
 
       // Open Success & Share modal
       setShareData({ waText, pdfHtml });
       setShareModalOpen(true);
     } catch (err) {
-      setError(err.message || 'Failed to submit report.');
+      setError(`${err.message || 'Failed to submit report.'} (Your typed work is safely preserved in this browser. You can click 'Submit' again to retry.)`);
     } finally {
       setSaving(false);
     }

@@ -490,12 +490,21 @@ app.post('/api/employee/:id/report', async (req, res) => {
       if (phase === 'BOD') {
         if (getIsPostgres()) {
           await run(
-            `INSERT INTO daily_reports (date, employee_id, department, bod_data, "bodData", last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)`,
-            [targetDate, effectiveId, emp.department, safePhaseJSON, safePhaseJSON, now.toISOString(), now.toISOString()]
+            `INSERT INTO daily_reports (date, "reportDate", employee_id, "employeeId", department, "departmentName", bod_data, "bodData", last_updated, "lastUpdated", bod_submitted_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?)
+             ON CONFLICT (date, employee_id) DO UPDATE SET
+               bod_data = EXCLUDED.bod_data,
+               "bodData" = EXCLUDED."bodData",
+               department = EXCLUDED.department,
+               "departmentName" = EXCLUDED."departmentName",
+               last_updated = EXCLUDED.last_updated,
+               "lastUpdated" = EXCLUDED."lastUpdated",
+               bod_submitted_at = COALESCE(daily_reports.bod_submitted_at, EXCLUDED.bod_submitted_at)`,
+            [targetDate, targetDate, effectiveId, effectiveId, emp.department, emp.department, safePhaseJSON, safePhaseJSON, now.toISOString(), now.toISOString(), now.toISOString()]
           );
         } else {
           await run(
-            `INSERT INTO daily_reports (date, employee_id, department, bod_data, last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?, ?)`,
+            `INSERT OR REPLACE INTO daily_reports (date, employee_id, department, bod_data, last_updated, bod_submitted_at) VALUES (?, ?, ?, ?, ?, ?)`,
             [targetDate, effectiveId, emp.department, safePhaseJSON, now.toISOString(), now.toISOString()]
           );
         }
@@ -546,13 +555,21 @@ app.post('/api/employee/:id/report', async (req, res) => {
 
         if (getIsPostgres()) {
           await run(
-            `UPDATE daily_reports SET bod_data = ?, "bodData" = ?::jsonb, system_score = ?, final_score = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
-            [safePhaseJSON, safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id]
+            `UPDATE daily_reports SET 
+               bod_data = ?, "bodData" = ?::jsonb, 
+               system_score = ?, final_score = ?, 
+               last_updated = ?, "lastUpdated" = ?, 
+               bod_submitted_at = COALESCE(bod_submitted_at, ?) 
+             WHERE (id = ? OR (date = ? AND (employee_id = ? OR employee_id = ?)))`,
+            [safePhaseJSON, safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), now.toISOString(), existing.id, targetDate, emp.id, effectiveId]
           );
         } else {
           await run(
-            `UPDATE daily_reports SET bod_data = ?, system_score = ?, final_score = ?, last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) WHERE id = ?`,
-            [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id]
+            `UPDATE daily_reports SET 
+               bod_data = ?, system_score = ?, final_score = ?, 
+               last_updated = ?, bod_submitted_at = COALESCE(bod_submitted_at, ?) 
+             WHERE (id = ? OR (date = ? AND (employee_id = ? OR employee_id = ?)))`,
+            [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), existing.id, targetDate, emp.id, effectiveId]
           );
         }
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
@@ -595,13 +612,24 @@ app.post('/api/employee/:id/report', async (req, res) => {
         const expiryTime = new Date(now.getTime() + REVIEW_WINDOW_MS).toISOString();
         if (getIsPostgres()) {
           await run(
-            `UPDATE daily_reports SET eod_data = ?, "eodData" = ?::jsonb, system_score = ?, final_score = ?, last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
-            [safePhaseJSON, safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id]
+            `UPDATE daily_reports SET 
+               eod_data = ?, "eodData" = ?::jsonb, 
+               system_score = ?, final_score = ?, "finalScore" = ?,
+               last_updated = ?, "lastUpdated" = ?, 
+               eod_submitted_at = COALESCE(eod_submitted_at, ?), 
+               approval_status = 'Pending Review', 
+               expiry_timestamp = ? 
+             WHERE (id = ? OR (date = ? AND (employee_id = ? OR employee_id = ?)))`,
+            [safePhaseJSON, safePhaseJSON, sysScore, finalScore, finalScore, now.toISOString(), now.toISOString(), now.toISOString(), expiryTime, existing.id, targetDate, emp.id, effectiveId]
           );
         } else {
           await run(
-            `UPDATE daily_reports SET eod_data = ?, system_score = ?, final_score = ?, last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), approval_status = 'Pending Review', expiry_timestamp = ? WHERE id = ?`,
-            [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id]
+            `UPDATE daily_reports SET 
+               eod_data = ?, system_score = ?, final_score = ?, 
+               last_updated = ?, eod_submitted_at = COALESCE(eod_submitted_at, ?), 
+               approval_status = 'Pending Review', expiry_timestamp = ? 
+             WHERE (id = ? OR (date = ? AND (employee_id = ? OR employee_id = ?)))`,
+            [safePhaseJSON, sysScore, finalScore, now.toISOString(), now.toISOString(), expiryTime, existing.id, targetDate, emp.id, effectiveId]
           );
         }
         savedReport = await get(`SELECT * FROM daily_reports WHERE id = ?`, [existing.id]);
