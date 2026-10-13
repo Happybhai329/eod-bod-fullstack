@@ -148,6 +148,15 @@ export default function BodEodFormModal({
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareData, setShareData] = useState({ waText: '', pdfHtml: '' });
   const [copied, setCopied] = useState(false);
+  const hasUserEditedRef = useRef(false);
+
+  const currDate = useMemo(() => {
+    const now = new Date();
+    const dd = String(now.getDate()).padStart(2, '0');
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  }, [isOpen]);
 
   const [currentBodData, setCurrentBodData] = useState(() => {
     if (!initialBodData) return null;
@@ -351,10 +360,14 @@ export default function BodEodFormModal({
   }, [normalizedTasks, phase, currentBodData, isLoadingConfig, modalConfig]);
 
   useEffect(() => {
-    if (!isOpen || isLoadingConfig) {
+    if (!isOpen) {
+      hasUserEditedRef.current = false;
       setShareModalOpen(false);
       setCopied(false);
       setError('');
+      return;
+    }
+    if (isLoadingConfig || hasUserEditedRef.current) {
       return;
     }
 
@@ -524,8 +537,24 @@ export default function BodEodFormModal({
         if (parsedDraft && typeof parsedDraft === 'object' && Object.keys(parsedDraft).length > 0) {
           for (const k in parsedDraft) {
             const hasServerData = Boolean(findTaskData(phase === 'BOD' ? currentBodData : currentEodData, { taskName: k }));
-            if (!hasServerData && parsedDraft[k]) {
-              initialForm[k] = parsedDraft[k];
+            if (!hasServerData && parsedDraft[k] && typeof parsedDraft[k] === 'object') {
+              if (phase === 'EOD' && initialForm[k]?.type === 'dynamicList') {
+                const draftMorning = Array.isArray(parsedDraft[k].morningItems) ? parsedDraft[k].morningItems : [];
+                const serverMorning = Array.isArray(initialForm[k].morningItems) ? initialForm[k].morningItems : [];
+                if (draftMorning.length >= serverMorning.length && draftMorning.length > 0) {
+                  initialForm[k] = parsedDraft[k];
+                } else {
+                  initialForm[k] = {
+                    ...initialForm[k],
+                    remarks: parsedDraft[k].remarks || initialForm[k].remarks || '',
+                    volItems: Array.isArray(parsedDraft[k].volItems) && parsedDraft[k].volItems.length > 0
+                      ? parsedDraft[k].volItems
+                      : initialForm[k].volItems
+                  };
+                }
+              } else {
+                initialForm[k] = parsedDraft[k];
+              }
             }
           }
         }
@@ -536,9 +565,9 @@ export default function BodEodFormModal({
     setVoluntaryOpenMap(initialVolMap);
   }, [isOpen, phase, visibleTasks, currentBodData, currentEodData, isLoadingConfig, currDate, user?.id]);
 
-  // Auto-save draft to localStorage on every change so user inputs can NEVER be lost
+  // Auto-save draft to localStorage ONLY when user has edited inputs so initial blank states never overwrite real data
   useEffect(() => {
-    if (!isOpen || !formData || Object.keys(formData).length === 0) return;
+    if (!isOpen || !hasUserEditedRef.current || !formData || Object.keys(formData).length === 0) return;
     try {
       const draftKey = `eod_bod_draft_${user?.id || 'emp'}_${phase}_${currDate}`;
       localStorage.setItem(draftKey, JSON.stringify(formData));
@@ -549,6 +578,7 @@ export default function BodEodFormModal({
   // HANDLERS FOR DYNAMIC LIST
   // ==========================================
   const addDynItemBOD = (taskName) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', list: [] };
       return {
@@ -565,6 +595,7 @@ export default function BodEodFormModal({
   };
 
   const removeDynItemBOD = (taskName, index) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', list: [] };
       const nextList = [...(task.list || [])];
@@ -577,6 +608,7 @@ export default function BodEodFormModal({
   };
 
   const updateDynItemBOD = (taskName, index, field, value) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', list: [] };
       const nextList = [...(task.list || [])];
@@ -589,6 +621,7 @@ export default function BodEodFormModal({
   };
 
   const toggleChecklistEOD = (taskName, morningIdx, chkIdx, checked) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', morningItems: [] };
       const nextMorning = [...(task.morningItems || [])];
@@ -605,6 +638,7 @@ export default function BodEodFormModal({
   };
 
   const updateMorningFieldEOD = (taskName, morningIdx, field, value) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', morningItems: [] };
       const nextMorning = [...(task.morningItems || [])];
@@ -617,6 +651,7 @@ export default function BodEodFormModal({
   };
 
   const setVoluntaryToggle = (taskName, show) => {
+    hasUserEditedRef.current = true;
     setVoluntaryOpenMap(prev => ({ ...prev, [taskName]: show }));
     if (show) {
       setFormData(prev => {
@@ -638,6 +673,7 @@ export default function BodEodFormModal({
   };
 
   const addVolItemEOD = (taskName) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', volItems: [] };
       return {
@@ -654,6 +690,7 @@ export default function BodEodFormModal({
   };
 
   const removeVolItemEOD = (taskName, index) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', volItems: [] };
       const nextVol = [...(task.volItems || [])];
@@ -666,6 +703,7 @@ export default function BodEodFormModal({
   };
 
   const updateVolItemEOD = (taskName, index, field, value) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'dynamicList', volItems: [] };
       const nextVol = [...(task.volItems || [])];
@@ -681,6 +719,7 @@ export default function BodEodFormModal({
   // HANDLERS FOR OTHER INPUT TYPES
   // ==========================================
   const updateTaskRemarks = (taskName, remarks) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => ({
       ...prev,
       [taskName]: { ...prev[taskName], remarks }
@@ -688,6 +727,7 @@ export default function BodEodFormModal({
   };
 
   const updateCheckboxStatus = (taskName, status) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => ({
       ...prev,
       [taskName]: { ...prev[taskName], status, type: 'checkbox' }
@@ -695,6 +735,7 @@ export default function BodEodFormModal({
   };
 
   const updateNumberValue = (taskName, value) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => ({
       ...prev,
       [taskName]: { ...prev[taskName], value, type: prev[taskName]?.type || 'number' }
@@ -702,6 +743,7 @@ export default function BodEodFormModal({
   };
 
   const addSubCatRow = (taskName, defaultCat) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'categoryNumber', subCatEntries: [] };
       return {
@@ -715,6 +757,7 @@ export default function BodEodFormModal({
   };
 
   const removeSubCatRow = (taskName, sIdx) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'categoryNumber', subCatEntries: [] };
       const nextEntries = [...(task.subCatEntries || [])];
@@ -727,6 +770,7 @@ export default function BodEodFormModal({
   };
 
   const updateSubCatKey = (taskName, sIdx, key) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'categoryNumber', subCatEntries: [] };
       const nextEntries = [...(task.subCatEntries || [])];
@@ -739,6 +783,7 @@ export default function BodEodFormModal({
   };
 
   const updateSubCatVal = (taskName, sIdx, val) => {
+    hasUserEditedRef.current = true;
     setFormData(prev => {
       const task = prev[taskName] || { type: 'categoryNumber', subCatEntries: [] };
       const nextEntries = [...(task.subCatEntries || [])];
@@ -829,7 +874,6 @@ export default function BodEodFormModal({
       const fData = {};
       const empName = user?.name || 'Employee';
       const empDept = user?.department || '';
-      const currDate = new Date().toLocaleDateString('en-GB'); // DD/MM/YYYY
 
       let waText = `*${phase} Report*\n*Name:* ${empName}\n*Date:* ${currDate}\n\n*----- TASKS -----*\n`;
       let pdfHtml = `<div style="font-family:Arial; padding:20px;"><h2 style="color:#0B2447; text-align:center; border-bottom:2px solid #0B2447; padding-bottom:10px;">${phase} Report</h2><p><b>Name:</b> ${escapeHtml(empName)}<br><b>Dept:</b> ${escapeHtml(empDept)}<br><b>Date:</b> ${currDate}</p><hr><table style="width:100%; border-collapse: collapse;">`;

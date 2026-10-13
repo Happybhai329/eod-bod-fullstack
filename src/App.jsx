@@ -229,7 +229,7 @@ export default function App() {
       )}
 
       {/* Modals */}
-      <ErrorBoundary title="Report Form Error" onReset={() => setIsFormOpen(false)}>
+      <ErrorBoundary key={`${isFormOpen}-${formPhase}`} title="Report Form Error" onReset={() => setIsFormOpen(false)}>
         {isFormOpen && (
           <BodEodFormModal
             isOpen={isFormOpen}
