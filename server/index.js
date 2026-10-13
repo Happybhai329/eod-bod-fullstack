@@ -1351,7 +1351,7 @@ if (isMainModule) {
       checkAutoApprovals().catch(err => {
         console.warn('[Auto Approval] Startup check notice:', err.message);
       });
-      startAutoSync(15 * 60 * 1000);
+      startAutoSync(60 * 60 * 1000);
     });
   }).catch(err => {
     console.error('Failed to initialize database:', err);

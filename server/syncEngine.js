@@ -107,20 +107,39 @@ export async function syncInbound(syncAll = false) {
       await Promise.all(chunk.map(async (e) => {
         try {
           if (isPg) {
-            await run(
-              `INSERT INTO employees ("employeeId", emp_id, name, department, sub_department, other_department, designation, role, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT ("employeeId") DO UPDATE SET
-                 emp_id = EXCLUDED.emp_id,
-                 name = EXCLUDED.name,
-                 department = EXCLUDED.department,
-                 sub_department = EXCLUDED.sub_department,
-                 other_department = EXCLUDED.other_department,
-                 designation = EXCLUDED.designation,
-                 role = EXCLUDED.role,
-                 status = EXCLUDED.status`,
-              [e.id, e.id, e.name, e.department, e.sub_department, e.other_department, e.designation || '', e.role, e.status]
-            );
+            try {
+              await run(
+                `INSERT INTO employees (id, "employeeId", emp_id, name, department, sub_department, other_department, designation, role, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT (id) DO UPDATE SET
+                   "employeeId" = EXCLUDED."employeeId",
+                   emp_id = EXCLUDED.emp_id,
+                   name = EXCLUDED.name,
+                   department = EXCLUDED.department,
+                   sub_department = EXCLUDED.sub_department,
+                   other_department = EXCLUDED.other_department,
+                   designation = EXCLUDED.designation,
+                   role = EXCLUDED.role,
+                   status = EXCLUDED.status`,
+                [e.id, e.id, e.id, e.name, e.department, e.sub_department, e.other_department, e.designation || '', e.role, e.status]
+              );
+            } catch (confErr) {
+              await run(
+                `INSERT INTO employees (id, "employeeId", emp_id, name, department, sub_department, other_department, designation, role, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT ("employeeId") DO UPDATE SET
+                   id = EXCLUDED.id,
+                   emp_id = EXCLUDED.emp_id,
+                   name = EXCLUDED.name,
+                   department = EXCLUDED.department,
+                   sub_department = EXCLUDED.sub_department,
+                   other_department = EXCLUDED.other_department,
+                   designation = EXCLUDED.designation,
+                   role = EXCLUDED.role,
+                   status = EXCLUDED.status`,
+                [e.id, e.id, e.id, e.name, e.department, e.sub_department, e.other_department, e.designation || '', e.role, e.status]
+              );
+            }
           } else {
             await run(
               `INSERT OR REPLACE INTO employees (id, emp_id, name, department, sub_department, other_department, designation, role, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
