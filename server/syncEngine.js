@@ -277,13 +277,16 @@ export async function syncInbound(syncAll = false) {
       return true;
     };
 
-    const targetReports = syncAll ? reports : reports.filter(r => isRecentDate(r.date));
-    console.log(`[Sync Inbound] Processing ${targetReports.length} daily reports from Sheets (syncAll=${syncAll})...`);
-
-    // Fetch existing records in ONE single lightweight query instead of thousands of roundtrips
-    const existingList = await query(
-      `SELECT date, employee_id, last_updated, approval_status, rated_by, rating_edited_by, approval_timestamp, expiry_timestamp, system_score, head_rating, final_score, bod_data, eod_data FROM daily_reports`
-    );
+    // Fetch existing records in ONE lightweight query filtered to the last 7 days (or all if syncAll=true)
+    const sevenDaysAgoDateStrs = [];
+    for (let d = 0; d < 8; d++) {
+      const dt = new Date(Date.now() - d * 86400000);
+      sevenDaysAgoDateStrs.push(dt.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }));
+    }
+    const datePhs = sevenDaysAgoDateStrs.map(() => '?').join(', ');
+    const existingList = syncAll
+      ? await query(`SELECT date, employee_id, last_updated, approval_status, rated_by, rating_edited_by, approval_timestamp, expiry_timestamp, system_score, head_rating, final_score, bod_data, eod_data FROM daily_reports`)
+      : await query(`SELECT date, employee_id, last_updated, approval_status, rated_by, rating_edited_by, approval_timestamp, expiry_timestamp, system_score, head_rating, final_score, bod_data, eod_data FROM daily_reports WHERE date IN (${datePhs})`, sevenDaysAgoDateStrs);
     const existingMap = new Map();
     for (const row of existingList) {
       existingMap.set(`${row.date}___${String(row.employee_id).trim()}`, row);
@@ -616,10 +619,15 @@ export async function syncOutbound(syncAll = false) {
       fine_doc_name, fine_issued_on, fine_issued_by, fine_status,
       employee_remarks
     `;
-    const limitClause = syncAll ? '' : 'LIMIT 350';
-    const recentReports = await query(
-      `SELECT ${selectCols} FROM daily_reports WHERE date IS NOT NULL ${orderClause} ${limitClause}`
-    );
+    const sevenDaysAgoDateStrs = [];
+    for (let d = 0; d < 8; d++) {
+      const dt = new Date(Date.now() - d * 86400000);
+      sevenDaysAgoDateStrs.push(dt.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }));
+    }
+    const datePhs = sevenDaysAgoDateStrs.map(() => '?').join(', ');
+    const recentReports = syncAll
+      ? await query(`SELECT ${selectCols} FROM daily_reports WHERE date IS NOT NULL ${orderClause}`)
+      : await query(`SELECT ${selectCols} FROM daily_reports WHERE date IN (${datePhs}) ${orderClause}`, sevenDaysAgoDateStrs);
 
     const batchUpdates = [];
     const newReportsToAppend = [];

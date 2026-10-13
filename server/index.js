@@ -364,8 +364,8 @@ app.get('/api/employee/:id/form', async (req, res) => {
     const todayStr = getTodayString();
     const effectiveId = emp.emp_id || emp.id;
     const todayReport = await get(
-      `SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`,
-      [todayStr, emp.id, effectiveId]
+      `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+      [empId, todayStr, emp.id, effectiveId]
     );
 
     let todayStatus = {
@@ -483,7 +483,10 @@ app.post('/api/employee/:id/report', async (req, res) => {
       : getTodayString();
     const now = new Date();
     const safePhaseJSON = JSON.stringify(phaseData);
-    const existing = await get(`SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`, [targetDate, emp.id, effectiveId]);
+    const existing = await get(
+      `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+      ['', targetDate, emp.id, effectiveId]
+    );
 
     let savedReport = null;
     if (!existing) {
@@ -516,8 +519,8 @@ app.post('/api/employee/:id/report', async (req, res) => {
         });
       }
       savedReport = await get(
-        `SELECT * FROM daily_reports WHERE date = ? AND (employee_id = ? OR employee_id = ?)`,
-        [targetDate, emp.id, effectiveId]
+        `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+        ['', targetDate, emp.id, effectiveId]
       );
     } else {
       if (existing.approval_status === 'Approved' || existing.approval_status === 'Auto Approved') {
@@ -657,9 +660,27 @@ app.get('/api/employee/:id/dashboard', async (req, res) => {
     await checkEmployeeAutoApprovals(effectiveId);
     const { filter = 'Weekly' } = req.query;
 
+    const empSelectCols = `
+      id, date, employee_id, department, bod_data, eod_data,
+      system_score, last_updated, head_rating, final_score,
+      attendance, overtime, rating_last_updated, rating_edited_by,
+      approval_status, approval_timestamp, expiry_timestamp,
+      rated_by, rated_on, fine_amount, fine_reason, fine_doc_url,
+      fine_doc_name, fine_issued_on, fine_issued_by, fine_status,
+      employee_remarks
+    `;
+    const numDaysEmp = filter === 'Daily' ? 1 : (filter === 'Weekly' ? 8 : 35);
+    const allowedDatesEmp = [];
+    const nowEmp = new Date();
+    for (let i = 0; i < numDaysEmp; i++) {
+      const d = new Date(nowEmp.getTime() - i * 86400000);
+      allowedDatesEmp.push(d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }));
+    }
+    const empDatePhs = allowedDatesEmp.map(() => '?').join(', ');
+
     const allReports = await query(
-      `SELECT * FROM daily_reports WHERE (employee_id = ? OR employee_id = ?)`,
-      [empId, effectiveId]
+      `SELECT ${empSelectCols} FROM daily_reports WHERE (employee_id IN (?, ?) OR "employeeId" IN (?, ?)) AND date IN (${empDatePhs})`,
+      [empId, effectiveId, empId, effectiveId, ...allowedDatesEmp]
     );
     const fines = await query(
       `SELECT * FROM fines WHERE (employee_id = ? OR employee_id = ?) ORDER BY id DESC`,
@@ -793,12 +814,28 @@ app.get('/api/head/dashboard', async (req, res) => {
       if (e.emp_id && e.name) empMap[e.emp_id] = e.name;
     });
 
-    let sql = `SELECT * FROM daily_reports WHERE (
+    const headSelectCols = `
+      id, date, employee_id, department, bod_data, eod_data,
+      system_score, last_updated, head_rating, final_score,
+      attendance, overtime, rating_last_updated, rating_edited_by,
+      approval_status, approval_timestamp, expiry_timestamp,
+      rated_by, rated_on
+    `;
+    const numDaysHead = filter === 'Daily' ? 1 : (filter === 'Weekly' ? 8 : 35);
+    const allowedDatesHead = [];
+    const nowHead = new Date();
+    for (let i = 0; i < numDaysHead; i++) {
+      const d = new Date(nowHead.getTime() - i * 86400000);
+      allowedDatesHead.push(d.toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }));
+    }
+    const headPlaceholders = allowedDatesHead.map(() => '?').join(', ');
+
+    let sql = `SELECT ${headSelectCols} FROM daily_reports WHERE date IN (${headPlaceholders}) AND (
       (bod_data IS NOT NULL AND bod_data != '' AND bod_data != '{}' AND bod_data != 'null') OR
       (eod_data IS NOT NULL AND eod_data != '' AND eod_data != '{}' AND eod_data != 'null') OR
       (approval_status IS NOT NULL AND approval_status != '')
     )`;
-    const allReports = await query(sql);
+    const allReports = await query(sql, allowedDatesHead);
 
     const hasValidSubmission = (r) => {
       if (!r) return false;
@@ -877,7 +914,10 @@ app.post('/api/head/rate', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Rating must be a number between 0 and 200.' });
     }
 
-    const report = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [dateStr, empId]);
+    const report = await get(
+      `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+      [empId, dateStr, empId, empId]
+    );
     if (!report) return res.status(404).json({ success: false, message: 'Report record not found.' });
     if (!hasValidEod(report)) return res.status(400).json({ success: false, message: 'An EOD report must be submitted before rating.' });
 
@@ -1087,7 +1127,10 @@ app.post('/api/fines/issue', async (req, res) => {
     );
 
     asyncSyncFine(fineObj);
-    const updatedDailyReport = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [dateStr, empId]);
+    const updatedDailyReport = await get(
+      `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+      [empId, dateStr, empId, empId]
+    );
     if (updatedDailyReport) asyncSyncReport(updatedDailyReport);
 
     res.json({ success: true, fineId, docUrl, message: 'Fine issued successfully.' });
@@ -1109,8 +1152,8 @@ app.post('/api/fines/status', async (req, res) => {
     );
 
     await run(
-      `UPDATE daily_reports SET fine_status = ?, employee_remarks = ?, last_updated = ? WHERE date = ? AND employee_id = ?`,
-      [status, employeeRemarks || '', nowIso, fine.date, fine.employee_id]
+      `UPDATE daily_reports SET fine_status = ?, employee_remarks = ?, last_updated = ? WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+      [status, employeeRemarks || '', nowIso, fine.id || '', fine.date, fine.employee_id, fine.employee_id]
     );
 
     // Notify issuing authority if disputed or acknowledged
@@ -1123,7 +1166,10 @@ app.post('/api/fines/status', async (req, res) => {
     const updatedFine = await get(`SELECT * FROM fines WHERE id = ?`, [fineId]);
     if (updatedFine) asyncSyncFine(updatedFine);
 
-    const updatedDailyReport = await get(`SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`, [fine.date, fine.employee_id]);
+    const updatedDailyReport = await get(
+      `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+      [fine.id || '', fine.date, fine.employee_id, fine.employee_id]
+    );
     if (updatedDailyReport) asyncSyncReport(updatedDailyReport);
 
     res.json({ success: true, message: 'Fine status updated successfully.' });

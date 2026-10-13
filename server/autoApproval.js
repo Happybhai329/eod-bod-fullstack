@@ -133,8 +133,8 @@ async function processCandidateReports(reports, now) {
                rated_on = ?, 
                last_updated = ?,
                "lastUpdated" = ?
-           WHERE id = ? OR (date = ? AND employee_id = ?)`,
-          [sysScore, sysScore, DEFAULT_HEAD_RATING, String(DEFAULT_HEAD_RATING), finalScore, finalScore, expiryDateStr, expiryDateStr, nowIso, nowIso, r.id, r.date, r.employee_id]
+           WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+          [sysScore, sysScore, DEFAULT_HEAD_RATING, String(DEFAULT_HEAD_RATING), finalScore, finalScore, expiryDateStr, expiryDateStr, nowIso, nowIso, r.id, r.date, r.employee_id, r.employee_id]
         );
       } else {
         await run(
@@ -147,8 +147,8 @@ async function processCandidateReports(reports, now) {
                rated_by = 'System (Auto Approval)', 
                rated_on = ?, 
                last_updated = ? 
-           WHERE id = ? OR (date = ? AND employee_id = ?)`,
-          [sysScore, DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, nowIso, r.id, r.date, r.employee_id]
+           WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+          [sysScore, DEFAULT_HEAD_RATING, finalScore, expiryDateStr, expiryDateStr, nowIso, r.id, r.date, r.employee_id, r.employee_id]
         );
       }
 
@@ -182,9 +182,10 @@ export async function checkAutoApprovals(force = false) {
     }
     lastCheckTime = now;
 
-    // Find all reports pending review that have completed EOD data and NO human reviewer
+    // Find all reports pending review that have completed EOD data and NO human reviewer (low-egress select)
+    const autoCols = `id, date, employee_id, "employeeId", approval_status, eod_data, bod_data, system_score, final_score, last_updated, eod_submitted_at, expiry_timestamp, rated_by, rating_edited_by`;
     const reports = await query(`
-      SELECT * FROM daily_reports 
+      SELECT ${autoCols} FROM daily_reports 
       WHERE (approval_status IS NULL OR approval_status = 'Pending Review' OR approval_status = '')
         AND (rating_edited_by IS NULL OR rating_edited_by = '' OR LOWER(rating_edited_by) LIKE '%system%')
         AND (rated_by IS NULL OR rated_by = '' OR LOWER(rated_by) LIKE '%system%')
@@ -219,9 +220,10 @@ export async function checkEmployeeAutoApprovals(empId) {
   if (!empId) return 0;
   try {
     const now = Date.now();
+    const autoCols = `id, date, employee_id, "employeeId", approval_status, eod_data, bod_data, system_score, final_score, last_updated, eod_submitted_at, expiry_timestamp, rated_by, rating_edited_by`;
     const reports = await query(`
-      SELECT * FROM daily_reports 
-      WHERE (employee_id = ? OR employee_id = ?)
+      SELECT ${autoCols} FROM daily_reports 
+      WHERE (employee_id IN (?, ?) OR "employeeId" IN (?, ?))
         AND (approval_status IS NULL OR approval_status = 'Pending Review' OR approval_status = '')
         AND (rating_edited_by IS NULL OR rating_edited_by = '' OR LOWER(rating_edited_by) LIKE '%system%')
         AND (rated_by IS NULL OR rated_by = '' OR LOWER(rated_by) LIKE '%system%')
@@ -229,7 +231,7 @@ export async function checkEmployeeAutoApprovals(empId) {
         AND eod_data != ''
         AND eod_data != '{}'
         AND eod_data != 'null'
-    `, [empId, empId]);
+    `, [empId, empId, empId, empId]);
 
     if (!reports || reports.length === 0) return 0;
     return await processCandidateReports(reports, now);
