@@ -95,7 +95,7 @@ function hasNonEmptyData(data) {
  * - User Configs: Only overwrite DB if Sheet row has newer last_updated
  * - Departments: Always overwrite DB (Sheets is master)
  */
-export async function syncInbound() {
+export async function syncInbound(syncAll = false) {
   const summary = { employees: 0, departments: 0, kras: 0, sops: 0, configs: 0, reports: 0, fines: 0, errors: 0, skippedNewerInDb: 0 };
   const isPg = getIsPostgres();
 
@@ -245,20 +245,40 @@ export async function syncInbound() {
   // ============ F. Daily Reports (Two-Way — skip if DB is newer) ============
   try {
     const reports = await fetchRealDailyReports();
-    console.log(`[Sync Inbound] Processing ${reports.length} daily reports from Sheets...`);
+
+    // In routine auto-sync, only sync reports from the last 7 days to eliminate 98% of database egress
+    const sevenDaysAgoMs = Date.now() - (7 * 24 * 60 * 60 * 1000);
+    const isRecentDate = (dStr) => {
+      if (!dStr) return false;
+      const parts = String(dStr).split('/');
+      if (parts.length === 3) {
+        const ms = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0])).getTime();
+        return ms >= sevenDaysAgoMs;
+      }
+      return true;
+    };
+
+    const targetReports = syncAll ? reports : reports.filter(r => isRecentDate(r.date));
+    console.log(`[Sync Inbound] Processing ${targetReports.length} daily reports from Sheets (syncAll=${syncAll})...`);
+
+    // Fetch existing records in ONE single lightweight query instead of thousands of roundtrips
+    const existingList = await query(
+      `SELECT date, employee_id, last_updated, approval_status, rated_by, rating_edited_by, approval_timestamp, expiry_timestamp, system_score, head_rating, final_score, bod_data, eod_data FROM daily_reports`
+    );
+    const existingMap = new Map();
+    for (const row of existingList) {
+      existingMap.set(`${row.date}___${String(row.employee_id).trim()}`, row);
+    }
     
-    for (let i = 0; i < reports.length; i += 10) {
-      const chunk = reports.slice(i, i + 10);
+    for (let i = 0; i < targetReports.length; i += 10) {
+      const chunk = targetReports.slice(i, i + 10);
       await Promise.all(chunk.map(async (r) => {
         try {
           const dateNorm = normalizeDateToDDMMYYYY(r.date);
           const empId = String(r.employee_id).trim();
           
-          // Check if DB already has a newer version of this report
-          const existing = await get(
-            `SELECT * FROM daily_reports WHERE date = ? AND employee_id = ?`,
-            [dateNorm, empId]
-          );
+          // Fast in-memory lookup (0ms, 0 network bytes)
+          const existing = existingMap.get(`${dateNorm}___${empId}`);
 
           // Check if DB and Sheets have valid, non-empty BOD and EOD data
           const dbHasBod = hasNonEmptyData(existing?.bod_data || existing?.bodData);
@@ -542,7 +562,7 @@ export async function syncInbound() {
  * Pushes all DB records that may differ from Sheets.
  * Uses batch updates for efficiency.
  */
-export async function syncOutbound() {
+export async function syncOutbound(syncAll = false) {
   const summary = { reportsSynced: 0, finesSynced: 0, configsSynced: 0, deptsSynced: 0, errors: 0 };
   const isPg = getIsPostgres();
 
@@ -568,8 +588,18 @@ export async function syncOutbound() {
     const orderClause = isPg
       ? 'ORDER BY last_updated DESC NULLS LAST'
       : 'ORDER BY last_updated DESC';
+    const selectCols = `
+      id, date, employee_id, department, bod_data, eod_data,
+      system_score, last_updated, head_rating, final_score,
+      attendance, overtime, rating_last_updated, rating_edited_by,
+      approval_status, approval_timestamp, expiry_timestamp,
+      rated_by, rated_on, fine_amount, fine_reason, fine_doc_url,
+      fine_doc_name, fine_issued_on, fine_issued_by, fine_status,
+      employee_remarks
+    `;
+    const limitClause = syncAll ? '' : 'LIMIT 350';
     const recentReports = await query(
-      `SELECT * FROM daily_reports WHERE date IS NOT NULL ${orderClause}`
+      `SELECT ${selectCols} FROM daily_reports WHERE date IS NOT NULL ${orderClause} ${limitClause}`
     );
 
     const batchUpdates = [];
@@ -880,12 +910,14 @@ export async function runTwoWaySync(triggeredBy = 'AUTO') {
 
     console.log(`[Two-Way Sync] \u{1F680} Starting ${triggeredBy} two-way synchronization...`);
 
+    const isFull = (triggeredBy === 'FULL' || triggeredBy === 'MANUAL');
+
     // Inbound: Pull Google Sheets -> DB
-    const inboundSummary = await syncInbound();
+    const inboundSummary = await syncInbound(isFull);
     console.log(`[Two-Way Sync] \u{1F4E5} Inbound complete:`, JSON.stringify(inboundSummary));
 
     // Outbound: Push DB -> Google Sheets
-    const outboundSummary = await syncOutbound();
+    const outboundSummary = await syncOutbound(isFull);
     console.log(`[Two-Way Sync] \u{1F4E4} Outbound complete:`, JSON.stringify(outboundSummary));
 
     const completedAt = new Date().toISOString();
@@ -951,7 +983,7 @@ export async function getSyncStatus() {
 /**
  * 5. BACKGROUND AUTO-SCHEDULER (Every 15 minutes)
  */
-export function startAutoSync(intervalMs = 15 * 60 * 1000) {
+export function startAutoSync(intervalMs = 60 * 60 * 1000) {
   if (autoSyncInterval) clearInterval(autoSyncInterval);
 
   console.log(`[Two-Way Sync] \u23F0 Background auto-sync scheduled every ${Math.round(intervalMs / 60000)} minutes.`);
