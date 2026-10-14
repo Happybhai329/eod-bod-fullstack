@@ -12,6 +12,6 @@ services:
       - key: PORT
         value: 10000
       - key: DATABASE_URL
-        value: "postgresql://postgres.vldsthccmlzxxlvothmp:yM2M7KNZvGPzapyj@aws-0-ap-south-1.pooler.supabase.com:5432/postgres"
+        sync: false
       - key: GOOGLE_CREDENTIALS_JSON
         sync: false
