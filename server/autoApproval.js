@@ -134,7 +134,7 @@ async function processCandidateReports(reports, now) {
                last_updated = ?,
                "lastUpdated" = ?
            WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
-          [sysScore, sysScore, DEFAULT_HEAD_RATING, String(DEFAULT_HEAD_RATING), finalScore, finalScore, expiryDateStr, expiryDateStr, nowIso, nowIso, r.id, r.date, r.employee_id, r.employee_id]
+          [sysScore, sysScore, DEFAULT_HEAD_RATING, DEFAULT_HEAD_RATING, finalScore, finalScore, expiryDateStr, expiryDateStr, nowIso, nowIso, r.id, r.date, r.employee_id, r.employee_id]
         );
       } else {
         await run(

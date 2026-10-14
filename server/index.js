@@ -936,6 +936,7 @@ app.post('/api/head/rate', async (req, res) => {
       await run(
         `UPDATE daily_reports SET 
            head_rating = ?, 
+           "headRating" = ?,
            final_score = ?, 
            "finalScore" = ?,
            attendance = ?, 
@@ -945,17 +946,16 @@ app.post('/api/head/rate', async (req, res) => {
            approval_status = 'Approved', 
            approval_timestamp = ?, 
            rated_by = ?, 
-           "headRating" = ?,
            rated_on = ?, 
            last_updated = ?,
-           "lastUpdated" = NOW()
-         WHERE id = ?`,
-        [numRating, finalScore, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, String(numRating), nowIso, nowIso, report.id]
+           "lastUpdated" = ?
+         WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
+        [numRating, numRating, finalScore, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, nowIso, report.id, dateStr, empId, empId]
       );
     } else {
       await run(
-        `UPDATE daily_reports SET head_rating = ?, final_score = ?, attendance = ?, overtime = ?, rating_last_updated = ?, rating_edited_by = ?, approval_status = 'Approved', approval_timestamp = ?, rated_by = ?, rated_on = ?, last_updated = ? WHERE id = ?`,
-        [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, report.id]
+        `UPDATE daily_reports SET head_rating = ?, final_score = ?, attendance = ?, overtime = ?, rating_last_updated = ?, rating_edited_by = ?, approval_status = 'Approved', approval_timestamp = ?, rated_by = ?, rated_on = ?, last_updated = ? WHERE (id = ? OR (date = ? AND employee_id = ?))`,
+        [numRating, finalScore, attendance, overtime, nowIso, raterName, nowIso, raterName, nowIso, nowIso, report.id, dateStr, empId]
       );
     }
 

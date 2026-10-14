@@ -390,6 +390,9 @@ export async function initDatabase() {
       DO $$ BEGIN
         ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS eod_submitted_at TEXT;
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS "headRating" REAL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
       CREATE OR REPLACE FUNCTION sync_daily_reports_columns()
       RETURNS TRIGGER AS $trg$
@@ -658,6 +661,13 @@ export async function initDatabase() {
               -- 3. Approval status
               IF NEW.approval_status IN ('EOD Missed', 'Pending EOD') OR NEW.approval_status IS NULL THEN
                   NEW.approval_status := 'Pending Review';
+              END IF;
+
+              -- 4. Head rating sync
+              IF NEW.head_rating IS NOT NULL THEN
+                  NEW."headRating" := NEW.head_rating;
+              ELSIF NEW."headRating" IS NOT NULL THEN
+                  NEW.head_rating := NEW."headRating";
               END IF;
           END IF;
 
