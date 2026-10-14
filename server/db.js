@@ -249,6 +249,9 @@ export async function initDatabase() {
       ALTER TABLE departments ADD COLUMN IF NOT EXISTS head_id TEXT;
       ALTER TABLE departments ADD COLUMN IF NOT EXISTS head_name TEXT;
       ALTER TABLE departments ADD COLUMN IF NOT EXISTS is_main INTEGER DEFAULT 1;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS "headId" TEXT;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS "headName" TEXT;
+      ALTER TABLE departments ADD COLUMN IF NOT EXISTS "parentDepartment" TEXT;
 
       DO $$ BEGIN
         ALTER TABLE departments ALTER COLUMN "departmentId" DROP NOT NULL;
@@ -270,6 +273,12 @@ export async function initDatabase() {
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS sub_department TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS other_department TEXT;
       ALTER TABLE employees ADD COLUMN IF NOT EXISTS designation TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS "subDepartment" TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS contact TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS phone TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS email TEXT;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS "joiningDate" TIMESTAMPTZ;
+      ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
 
       DO $$ BEGIN
         ALTER TABLE employees ALTER COLUMN id SET DEFAULT gen_random_uuid()::text;
@@ -316,7 +325,19 @@ export async function initDatabase() {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_departments_name ON departments(name);
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
       DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS "departments_departmentName_key" ON departments("departmentName");
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS "departments_departmentId_key" ON departments("departmentId");
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
         CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_id ON employees(id);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS "employees_employeeId_key" ON employees("employeeId");
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS "employees_emp_id_key" ON employees(emp_id);
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
       DO $$ BEGIN
@@ -392,6 +413,21 @@ export async function initDatabase() {
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
       DO $$ BEGIN
         ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS "headRating" REAL;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS "dateTimestamp" BIGINT;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS "daily_reports_employeeId_reportDate_key" ON daily_reports ("employeeId", "reportDate");
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE INDEX IF NOT EXISTS "daily_reports_departmentName_reportDate_idx" ON daily_reports ("departmentName", "reportDate");
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE INDEX IF NOT EXISTS "daily_reports_dateTimestamp_idx" ON daily_reports ("dateTimestamp");
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN
+        CREATE INDEX IF NOT EXISTS "daily_reports_reportDate_idx" ON daily_reports ("reportDate");
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
 
       CREATE OR REPLACE FUNCTION sync_daily_reports_columns()
@@ -687,6 +723,91 @@ export async function initDatabase() {
           FOR EACH ROW EXECUTE FUNCTION sync_daily_reports_columns();
         END IF;
       EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      -- Notifications table alignment & bi-directional sync
+      DO $$ BEGIN
+        CREATE TABLE IF NOT EXISTS notifications (
+          id TEXT PRIMARY KEY,
+          employee_id TEXT,
+          type TEXT,
+          message TEXT,
+          created_on TEXT,
+          read INTEGER DEFAULT 0,
+          target_user TEXT,
+          is_read INTEGER DEFAULT 0,
+          created_at TEXT,
+          action_url TEXT,
+          title TEXT,
+          date TEXT
+        );
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS employee_id TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_on TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read INTEGER DEFAULT 0;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS target_user TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS is_read INTEGER DEFAULT 0;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS created_at TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS action_url TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS title TEXT;
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS date TEXT;
+
+      DO $$ BEGIN ALTER TABLE notifications ALTER COLUMN title DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN ALTER TABLE notifications ALTER COLUMN date DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN ALTER TABLE notifications ALTER COLUMN created_at DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN ALTER TABLE notifications ALTER COLUMN type DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+      DO $$ BEGIN ALTER TABLE notifications ALTER COLUMN message DROP NOT NULL; EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      CREATE OR REPLACE FUNCTION sync_notifications_columns()
+      RETURNS TRIGGER AS $notif_trg$
+      BEGIN
+          IF TG_OP = 'UPDATE' THEN
+              IF NEW.employee_id IS DISTINCT FROM OLD.employee_id THEN
+                  NEW.target_user := NEW.employee_id;
+              ELSIF NEW.target_user IS DISTINCT FROM OLD.target_user THEN
+                  NEW.employee_id := NEW.target_user;
+              END IF;
+
+              IF NEW.read IS DISTINCT FROM OLD.read THEN
+                  NEW.is_read := NEW.read;
+              ELSIF NEW.is_read IS DISTINCT FROM OLD.is_read THEN
+                  NEW.read := NEW.is_read;
+              END IF;
+          ELSE
+              -- INSERT
+              NEW.employee_id := COALESCE(NULLIF(NEW.employee_id, ''), NULLIF(NEW.target_user, ''));
+              NEW.target_user := COALESCE(NULLIF(NEW.target_user, ''), NULLIF(NEW.employee_id, ''));
+
+              IF NEW.read IS NOT NULL THEN
+                  NEW.is_read := NEW.read;
+              ELSIF NEW.is_read IS NOT NULL THEN
+                  NEW.read := NEW.is_read;
+              ELSE
+                  NEW.read := 0;
+                  NEW.is_read := 0;
+              END IF;
+          END IF;
+
+          NEW.created_on := COALESCE(NULLIF(NEW.created_on, ''), NULLIF(NEW.created_at, ''), NULLIF(NEW.date, ''), NOW()::text);
+          NEW.created_at := COALESCE(NULLIF(NEW.created_at, ''), NULLIF(NEW.created_on, ''), NOW()::text);
+          NEW.date := COALESCE(NULLIF(NEW.date, ''), NULLIF(NEW.created_on, ''), NOW()::text);
+          NEW.title := COALESCE(NULLIF(NEW.title, ''), NEW.type, 'Notification');
+
+          RETURN NEW;
+      END;
+      $notif_trg$ LANGUAGE plpgsql;
+
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_sync_notifications_columns') THEN
+          CREATE TRIGGER trg_sync_notifications_columns
+          BEFORE INSERT OR UPDATE ON notifications
+          FOR EACH ROW EXECUTE FUNCTION sync_notifications_columns();
+        END IF;
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+      DO $$ BEGIN
+        CREATE INDEX IF NOT EXISTS idx_notifications_emp ON notifications(employee_id);
+      EXCEPTION WHEN OTHERS THEN NULL; END $$;
     `);
   } else {
     try {
@@ -802,11 +923,17 @@ export async function initDatabase() {
   await run(`
     CREATE TABLE IF NOT EXISTS notifications (
       id TEXT PRIMARY KEY,
-      employee_id TEXT NOT NULL,
-      type TEXT NOT NULL,
-      message TEXT NOT NULL,
-      created_on TEXT NOT NULL,
-      read INTEGER DEFAULT 0
+      employee_id TEXT,
+      type TEXT,
+      message TEXT,
+      created_on TEXT,
+      read INTEGER DEFAULT 0,
+      target_user TEXT,
+      is_read INTEGER DEFAULT 0,
+      created_at TEXT,
+      action_url TEXT,
+      title TEXT,
+      date TEXT
     )
   `);
 
