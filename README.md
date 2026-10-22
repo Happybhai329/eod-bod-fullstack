@@ -400,8 +400,21 @@ This project is licensed under the [ISC License](LICENSE) or applicable organiza
 
 ---
 
-## 👤 Author
+---
 
-**Happybhai329**
-- GitHub: [@Happybhai329](https://github.com/Happybhai329)
-- Repository: [Happybhai329/eod-bod-fullstack](https://github.com/Happybhai329/eod-bod-fullstack)
+## 👤 Author & Maintainer
+
+**Happy Bhasin**  
+*Full Stack & AI Engineer* | Amity University Madhya Pradesh (B.Tech CSE with Minor in AI/ML)  
+
+- 🌐 **GitHub:** [@Happybhai329](https://github.com/Happybhai329)  
+- 💼 **LinkedIn:** [Happy Bhasin](https://www.linkedin.com/in/happy-bhasin-908191267)  
+- 📧 **Email:** [bhasinhappy0506@gmail.com](mailto:bhasinhappy0506@gmail.com)  
+- 📱 **Phone:** +91 9220553665  
+- 📍 **Location:** India (Open to Remote & Global Relocation)  
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).
