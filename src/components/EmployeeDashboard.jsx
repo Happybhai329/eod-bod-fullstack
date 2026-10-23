@@ -78,24 +78,66 @@ export default function EmployeeDashboard({ user, showToast, onOpenForm, onOpenK
         dashRes.json()
       ]);
 
-      if (formData.success) {
-        setTodayStatus(formData.todayStatus || { bodFilled: false, eodFilled: false });
-        let parsedBod = formData.bodData;
-        if (typeof parsedBod === 'string') {
-          try { parsedBod = JSON.parse(parsedBod); } catch (e) {}
-        }
-        let parsedEod = formData.eodData;
-        if (typeof parsedEod === 'string') {
-          try { parsedEod = JSON.parse(parsedEod); } catch (e) {}
-        }
-        setBodData(parsedBod);
-        setEodData(parsedEod);
-        setConfig(formData.config || []);
-        setFetchedAt(Date.now());
-        setNow(Date.now());
+      const todayStr = new Date().toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' });
+      const todayAltStr = new Date().toLocaleDateString('en-GB');
+      const todayReportFromDash = (dashData?.success && Array.isArray(dashData.data?.reports))
+        ? dashData.data.reports.find(r => r.date === todayStr || r.date === todayAltStr)
+        : null;
+
+      let todayStatusObj = (formData?.success && formData?.todayStatus) 
+        ? { ...formData.todayStatus } 
+        : { bodFilled: false, eodFilled: false, bodEditable: false, eodEditable: false };
+      let parsedBod = formData?.success ? formData.bodData : null;
+      let parsedEod = formData?.success ? formData.eodData : null;
+
+      if (typeof parsedBod === 'string') {
+        try { parsedBod = JSON.parse(parsedBod); } catch (e) {}
+      }
+      if (typeof parsedEod === 'string') {
+        try { parsedEod = JSON.parse(parsedEod); } catch (e) {}
       }
 
-      if (dashData.success) {
+      // Reconciliation Safeguard: If dashboard reports contain today's report with submitted BOD,
+      // never let the tile falsely show "Not submitted yet" or keep EOD locked!
+      if (todayReportFromDash) {
+        const dashBod = todayReportFromDash.bod_data || todayReportFromDash.bodData;
+        const hasDashBod = Boolean(dashBod && dashBod !== '' && dashBod !== '{}' && dashBod !== 'null');
+        const dashEod = todayReportFromDash.eod_data || todayReportFromDash.eodData;
+        const hasDashEod = Boolean(dashEod && dashEod !== '' && dashEod !== '{}' && dashEod !== 'null');
+
+        if (hasDashBod) {
+          todayStatusObj.bodFilled = true;
+          todayStatusObj.eodEditable = true;
+          if (!parsedBod || (typeof parsedBod === 'object' && Object.keys(parsedBod).length === 0)) {
+            try {
+              parsedBod = typeof dashBod === 'string' ? JSON.parse(dashBod) : dashBod;
+            } catch (_) {
+              parsedBod = dashBod;
+            }
+          }
+        }
+        if (hasDashEod) {
+          todayStatusObj.eodFilled = true;
+          if (!parsedEod || (typeof parsedEod === 'object' && Object.keys(parsedEod).length === 0)) {
+            try {
+              parsedEod = typeof dashEod === 'string' ? JSON.parse(dashEod) : dashEod;
+            } catch (_) {
+              parsedEod = dashEod;
+            }
+          }
+        }
+      }
+
+      setTodayStatus(todayStatusObj);
+      setBodData(parsedBod);
+      setEodData(parsedEod);
+      if (formData?.success && formData?.config) {
+        setConfig(formData.config);
+      }
+      setFetchedAt(Date.now());
+      setNow(Date.now());
+
+      if (dashData?.success) {
         setData(dashData.data);
       }
     } catch (err) {

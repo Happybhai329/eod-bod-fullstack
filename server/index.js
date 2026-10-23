@@ -45,6 +45,14 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Never cache API responses in client browsers or proxies to prevent stale workday status
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+  next();
+});
+
 // Safe non-blocking sync helpers with retry & backoff
 async function asyncSyncReport(report) {
   if (!report) return;
@@ -364,8 +372,11 @@ app.get('/api/employee/:id/form', async (req, res) => {
     const todayStr = getTodayString();
     const effectiveId = emp.emp_id || emp.id;
     const todayReport = await get(
-      `SELECT * FROM daily_reports WHERE (id = ? OR (date = ? AND (employee_id = ? OR "employeeId" = ?)))`,
-      [empId, todayStr, emp.id, effectiveId]
+      `SELECT * FROM daily_reports 
+       WHERE (date = ? OR "reportDate" = ?) 
+         AND (employee_id IN (?, ?) OR "employeeId" IN (?, ?))
+       ORDER BY CASE WHEN bod_data IS NOT NULL AND bod_data != '' AND bod_data != '{}' THEN 1 ELSE 2 END, id DESC LIMIT 1`,
+      [todayStr, todayStr, emp.id, effectiveId, emp.id, effectiveId]
     );
 
     let todayStatus = {

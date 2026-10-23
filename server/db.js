@@ -66,33 +66,43 @@ export function getSqliteDb() {
 function getPgConfig(dbUrl) {
   try {
     const u = new URL(dbUrl);
+    let port = u.port ? parseInt(u.port, 10) : 5432;
+    // Supabase Pooler: port 5432 is Session mode (strictly capped at 15 clients).
+    // Port 6543 is Transaction mode (Supavisor connection pooling for thousands of concurrent requests).
+    if (u.hostname.includes('pooler.supabase.com') && port === 5432) {
+      port = 6543;
+    }
     return {
       host: u.hostname,
-      port: u.port ? parseInt(u.port, 10) : 5432,
+      port: port,
       database: u.pathname ? u.pathname.replace(/^\//, '') : 'postgres',
       user: decodeURIComponent(u.username),
       password: decodeURIComponent(u.password),
       ssl: { rejectUnauthorized: false },
-      max: 5,
+      max: 10,
       idleTimeoutMillis: 5000,
       connectionTimeoutMillis: 10000
     };
   } catch (e) {
     const m = dbUrl.match(/^postgres(?:ql)?:\/\/([^:]+):(.*)@([^:/]+)(?::(\d+))?\/(.+)$/);
     if (m) {
+      let port = m[4] ? parseInt(m[4], 10) : 5432;
+      if (m[3].includes('pooler.supabase.com') && port === 5432) {
+        port = 6543;
+      }
       return {
         user: m[1],
         password: m[2],
         host: m[3],
-        port: m[4] ? parseInt(m[4], 10) : 5432,
+        port: port,
         database: m[5].split('?')[0],
         ssl: { rejectUnauthorized: false },
-        max: 5,
+        max: 10,
         idleTimeoutMillis: 5000,
         connectionTimeoutMillis: 10000
       };
     }
-    return { connectionString: dbUrl, ssl: { rejectUnauthorized: false }, max: 5, idleTimeoutMillis: 5000, connectionTimeoutMillis: 10000 };
+    return { connectionString: dbUrl, ssl: { rejectUnauthorized: false }, max: 10, idleTimeoutMillis: 5000, connectionTimeoutMillis: 10000 };
   }
 }
 
