@@ -64,6 +64,11 @@ The system features an automated **two-tier scoring algorithm**, manager perform
 - Background worker triggers automated syncs every 15 minutes, upon server boot, or on-demand via the Head Dashboard.
 - Concurrency locking prevents race conditions, and an audit trail is logged to the `sync_logs` table.
 
+### ⚡ High-Throughput Production Resilience
+- **Real-Time Workday Status Reconciliation**: Live reconciliation of employee active workday states from real-time dashboard reports, completely preventing stale UI status caches.
+- **Supabase Transaction Pooler (Port 6543)**: Native pooler configuration handling connection spikes gracefully with SSL keep-alive connections.
+- **Strict Cache Control**: Dynamic API responses enforce zero-caching policies, ensuring instant multi-device reflection of submitted BOD/EOD logs and head ratings.
+
 ---
 
 ## 🏗️ System Architecture
